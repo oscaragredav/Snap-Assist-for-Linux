@@ -7,9 +7,7 @@ para escuchar el flujo de eventos globalmente sin requerir exclusividad.
 """
 
 import logging
-from typing import Callable, Dict, List
-
-from pynput import keyboard
+from typing import Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +42,8 @@ def parse_hotkey(hotkey_str: str) -> str:
             key = "<tab>"
         elif key in ("esc", "escape"):
             key = "<esc>"
+        elif key == "slash":
+            key = "/"
         # etc... (se pueden añadir más según sea necesario)
         
     pynput_parts.append(key)
@@ -55,11 +55,14 @@ class HotkeyManager:
     Gestiona el registro y captura de atajos de teclado globales usando pynput.
     """
 
-    def __init__(self, display_obj=None, root_window=None) -> None:
+    def __init__(self, display_obj=None, root_window=None, pointer_event_queue=None) -> None:
         # display_obj y root_window se mantienen por compatibilidad con main.py
         self._bindings: Dict[str, Callable] = {}
         self._original_names: Dict[str, str] = {}
-        self._listener = None
+        self._listener: Optional[object] = None
+        self._pointer_listener: Optional[object] = None
+        self._pointer_event_queue = pointer_event_queue
+        self._pointer_pressed = False
 
         logger.info("HotkeyManager inicializado (usando pynput/XRecord).")
 
@@ -95,9 +98,22 @@ class HotkeyManager:
             return
 
         if self._listener is None:
+            # pynput intenta conectarse a X11 durante la importación. Hacerlo
+            # aquí permite importar y probar la lógica pura sin display, y
+            # conserva la conexión sólo para el daemon que realmente arranca.
+            from pynput import keyboard
             self._listener = keyboard.GlobalHotKeys(self._bindings)
             self._listener.start()
             logger.info("Listener de teclado iniciado en segundo plano.")
+
+        if self._pointer_event_queue is not None and self._pointer_listener is None:
+            from pynput import mouse
+            self._pointer_listener = mouse.Listener(
+                on_click=self._on_pointer_click,
+                on_move=self._on_pointer_move,
+            )
+            self._pointer_listener.start()
+            logger.info("Listener global de puntero iniciado en segundo plano.")
 
     def unregister_all(self) -> None:
         """
@@ -106,6 +122,11 @@ class HotkeyManager:
         if self._listener:
             self._listener.stop()
             self._listener = None
+
+        if self._pointer_listener:
+            self._pointer_listener.stop()
+            self._pointer_listener = None
+        self._pointer_pressed = False
             
         count = len(self._bindings)
         self._bindings.clear()
@@ -126,3 +147,19 @@ class HotkeyManager:
 
     def get_registered_hotkeys(self) -> List[str]:
         return list(self._original_names.values())
+
+    def _on_pointer_click(self, x, y, _button, pressed) -> None:
+        """Reenvía el ciclo de click al event loop sin tocar X11 desde este hilo."""
+        if self._pointer_event_queue is None:
+            return
+        self._pointer_pressed = pressed
+        self._pointer_event_queue.put({
+            "event": "pointer_press" if pressed else "pointer_release",
+            "x": x,
+            "y": y,
+        })
+
+    def _on_pointer_move(self, x, y) -> None:
+        """Sólo reenvía movimiento mientras existe un botón presionado."""
+        if self._pointer_event_queue is not None and self._pointer_pressed:
+            self._pointer_event_queue.put({"event": "pointer_move", "x": x, "y": y})

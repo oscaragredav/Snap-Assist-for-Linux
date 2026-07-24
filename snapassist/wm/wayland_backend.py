@@ -14,7 +14,7 @@ En una versión futura, esta implementación usará:
 import logging
 from typing import List, Optional
 
-from snapassist.config import Rect, WindowGeometry, WindowState, WindowType
+from snapassist.config import Rect, WindowGeometry, WindowInfo, WindowState, WindowType
 from snapassist.wm.backend import WindowManager
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,13 @@ class WaylandBackend(WindowManager):
     def get_all_windows(self) -> List[int]:
         raise NotImplementedError(_WAYLAND_MSG)
 
+    def get_eligible_windows(self) -> List[WindowInfo]:
+        raise NotImplementedError(_WAYLAND_MSG)
+
     def get_window_geometry(self, wid: int) -> WindowGeometry:
+        raise NotImplementedError(_WAYLAND_MSG)
+
+    def get_window_min_size(self, wid: int) -> tuple[int, int]:
         raise NotImplementedError(_WAYLAND_MSG)
 
     def get_window_title(self, wid: int) -> str:
@@ -66,6 +72,15 @@ class WaylandBackend(WindowManager):
         raise NotImplementedError(_WAYLAND_MSG)
 
     def focus_window(self, wid: int) -> None:
+        raise NotImplementedError(_WAYLAND_MSG)
+
+    def set_window_maximized(self, wid: int, maximized: bool) -> None:
+        raise NotImplementedError(_WAYLAND_MSG)
+
+    def move_window_to_current_workspace(self, wid: int) -> None:
+        raise NotImplementedError(_WAYLAND_MSG)
+
+    def window_exists(self, wid: int) -> bool:
         raise NotImplementedError(_WAYLAND_MSG)
 
     def get_transient_for(self, wid: int) -> Optional[int]:

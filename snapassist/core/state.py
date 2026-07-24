@@ -9,7 +9,7 @@ Todo se inicializa vacío al arrancar el daemon.
 import logging
 from typing import Dict, List, Optional
 
-from snapassist.config import SnapGroup, WindowGeometry, ZoneRef
+from snapassist.config import QUICKKEY_SEQUENCE, SnapGroup, WindowGeometry, WindowInfo, ZoneRef
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,35 @@ class State:
         if wid in self.mru_list:
             self.mru_list.remove(wid)
             logger.debug("Ventana 0x%x removida de MRU. Total: %d", wid, len(self.mru_list))
+
+    def get_sorted_eligible(
+        self, all_windows: List[WindowInfo], exclude_wid: Optional[int] = None
+    ) -> List[WindowInfo]:
+        """Ordena ventanas elegibles por MRU y les asigna quickkeys únicas.
+
+        El filtrado de ventanas de sistema, fullscreen y always-on-top es
+        responsabilidad del backend. Las ventanas minimizadas se conservan:
+        son candidatas válidas y el backend las restaura al enfocarlas.
+        """
+        candidates = [info for info in all_windows if info.window_id != exclude_wid]
+        mru_position = {wid: index for index, wid in enumerate(self.mru_list)}
+        ordered = sorted(
+            enumerate(candidates),
+            key=lambda item: (mru_position.get(item[1].window_id, len(mru_position)), item[0]),
+        )
+
+        result: List[WindowInfo] = []
+        for index, (_, info) in enumerate(ordered):
+            if index >= len(QUICKKEY_SEQUENCE):
+                logger.warning("No hay quickkey disponible para 0x%x", info.window_id)
+                break
+            result.append(WindowInfo(
+                window_id=info.window_id,
+                title=info.title,
+                on_other_workspace=info.on_other_workspace,
+                quickkey=QUICKKEY_SEQUENCE[index],
+            ))
+        return result
 
     # ------------------------------------------------------------------
     # Geometrías previas (Toggle de Memoria)

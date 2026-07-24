@@ -74,3 +74,15 @@ class LayoutEngine:
             self.calculate_zone_rect(work_area, zone)
             for zone in template.zones
         ]
+
+    @staticmethod
+    def center_minimum_size(min_size: tuple[int, int], zone_rect: Rect) -> Rect:
+        """Centra una ventana que no puede reducirse al tamaño de su zona."""
+        width = max(zone_rect.w, min_size[0])
+        height = max(zone_rect.h, min_size[1])
+        return Rect(
+            x=zone_rect.x + (zone_rect.w - width) // 2,
+            y=zone_rect.y + (zone_rect.h - height) // 2,
+            w=width,
+            h=height,
+        )

@@ -44,8 +44,8 @@ Una ventana solo puede pertenecer a un Snap Group a la vez. Al ser acoplada a un
 Si el usuario aplica Super+Z sobre una ventana que ya pertenece a un layout activo, la operación reubica únicamente esa ventana en la nueva zona seleccionada. Las demás ventanas del layout anterior conservan su posición y siguen perteneciendo al grupo. La ventana reubicada pasa a pertenecer al nuevo grupo si se forma uno, o queda en estado flotante si el flujo es cancelado.
 9. Cierre de una Ventana Dentro de un Grupo
 El daemon escucha eventos DestroyNotify (X11) en tiempo real. Al detectar el cierre de una ventana que pertenece a un grupo activo, la elimina del grupo inmediatamente. Si el grupo resultante queda con una sola ventana, el grupo se disuelve. El espacio físico que deja la ventana cerrada permanece vacío sin acción automática sobre las ventanas restantes.
-10. Ventana que Cambia de Tamaño por Sí Misma
-Si el daemon detecta un evento ConfigureNotify de resize sobre una ventana acoplada que no fue iniciado por el propio daemon, registra ese evento como un desacoplamiento implícito: la ventana es liberada del grupo con la misma semántica que un arrastre con mouse. El daemon no reimpondrá las dimensiones del layout. El grupo resultante sigue las mismas reglas de disolución de la sección 9.
+10. Cambios de Tamaño y Ajustes Espontáneos
+Un `ConfigureNotify` aislado no implica desacoplamiento: gestores de ventanas y aplicaciones como Terminal, Spotify o clientes Electron emiten ajustes al cambiar foco, salir de maximizado o aplicar restricciones mínimas. Estos ajustes conservan la pertenencia al grupo. El desacoplamiento por resize sólo ocurre cuando el evento forma parte de un gesto de usuario iniciado sobre el borde de una ventana acoplada y supera el umbral configurado. El daemon no reimpone las dimensiones después de ese gesto y el grupo resultante sigue las reglas de disolución de la sección 9.
 
 Parte IV — Comportamiento del Entorno y Casos Borde
 11. Restauración de Estado (Toggle de Memoria)
@@ -53,13 +53,13 @@ Antes de aplicar cualquier redimensionamiento, el daemon almacena en memoria un 
 12. Umbral de Tolerancia al Desacoplar con Mouse
 Para evitar desacoplamientos accidentales por microdesplazamientos involuntarios durante un clic en la barra de título, el sistema aplica un umbral mínimo de desplazamiento antes de considerar un gesto como arrastre intencional. El valor por defecto es 8px y es configurable en config.py.
 13. Restricciones de Tamaño Mínimo de Ventanas
-Si una aplicación tiene restricciones de tamaño mínimo que impidan su acoplamiento exacto a una zona, el sistema aplica el comportamiento "Ignorar y Centrar": posiciona la ventana flotante centrada dentro de su zona asignada, con desborde simétrico si es necesario, sin interrumpir el flujo del Snap Assist.
+Si una aplicación tiene restricciones de tamaño mínimo que impidan su acoplamiento exacto a una zona, el sistema aplica el comportamiento "Ignorar y Centrar": posiciona la ventana flotante centrada dentro de su zona asignada, con desborde simétrico si es necesario, sin interrumpir el flujo del Snap Assist. La ventana conserva su pertenencia lógica a la zona y al Snap Group aunque su geometría física desborde hacia zonas contiguas; esto permite agrupar aplicaciones como Spotify sin forzar un tamaño que rechazan.
 14. Jerarquía de Ventanas Hijas y Modales
 El sistema identifica la jerarquía de la ventana seleccionada mediante WM_TRANSIENT_FOR (X11). Si la ventana principal tiene un diálogo modal activo, el redimensionamiento se aplica al padre y la ventana modal se desplaza en bloque manteniéndose centrada sobre él para evitar que quede huérfana u oculta.
 15. Filtro de Ventanas Elegibles
 El Snap Assist solo presenta como elegibles las ventanas que cumplan simultáneamente todas las condiciones siguientes:
 
-Estar en estado visible (IsViewable / mapeadas gráficamente). Las ventanas minimizadas quedan excluidas.
+Estar en estado visible (IsViewable / mapeadas gráficamente) o minimizada. Las ventanas minimizadas son elegibles y, al seleccionarlas, se restauran antes de acoplarse.
 No tener activada la bandera _NET_WM_STATE_SKIP_TASKBAR.
 Pertenecer al tipo _NET_WM_WINDOW_TYPE_NORMAL o equivalente. Las ventanas con tipo Always on Top o en estado de pantalla completa exclusiva quedan excluidas.
 No ser la ventana activa que ya ocupa la primera zona del layout en curso.

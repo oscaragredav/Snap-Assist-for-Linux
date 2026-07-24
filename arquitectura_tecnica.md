@@ -319,7 +319,7 @@ HOTKEY_SNAP_GROUPS     = "super+alt+tab"
 HOTKEY_HELP            = "super+slash"
 SNAP_ANIMATION_MS      = 200       # duración de transición post-acoplamiento
 DRAG_THRESHOLD_PX      = 8         # umbral de desacoplamiento por mouse
-QUICKKEY_SEQUENCE      = "qwertyu" # teclas de acceso rápido en Snap Assist
+QUICKKEY_SEQUENCE      = "qwertyuiop" # teclas de acceso rápido en Snap Assist
 OVERLAY_OPACITY        = 0.35      # opacidad del overlay de zona (0.0 - 1.0)
 LAYOUT_TEMPLATES       = [...]     # lista de LayoutTemplate activos
 ```
@@ -405,14 +405,14 @@ El sistema no usa un bus de mensajes interno formal. La comunicación entre mód
 |---|---|---|
 | `PropertyNotify` sobre `_NET_ACTIVE_WINDOW` | Siempre | `State.update_mru(new_active_wid)` |
 | `DestroyNotify` | La ventana destruida está en `State.snapped_windows` | `GroupManager.on_window_destroyed(wid)` |
-| `ConfigureNotify` | La ventana reconfigurada está en `State.snapped_windows` Y el resize no fue iniciado por el daemon | `GroupManager.on_window_resized(wid)` |
+| `ConfigureNotify` | La ventana está acoplada y existe un gesto de resize de usuario confirmado sobre su borde | `GroupManager.on_window_resized(wid)` |
 | `MapNotify` | Siempre | Actualizar caché interno de ventanas visibles |
 | `UnmapNotify` | Siempre | Actualizar caché interno de ventanas visibles |
 | `KeyPress` | El keycode coincide con un atajo registrado | Callback del `HotkeyManager` correspondiente |
 
 ### 5.2 Distinción entre resize propio y resize externo
 
-Para que `ConfigureNotify` no dispare un desacoplamiento cuando es el propio daemon el que mueve una ventana, el daemon mantiene un `Set[int]` llamado `_pending_own_resizes` con los `window_id` sobre los que acaba de ejecutar `move_resize_window`. Al recibir `ConfigureNotify`, si el `wid` está en ese set, el evento se ignora y se remueve del set. Si no está, se trata como resize externo.
+Para que `ConfigureNotify` no dispare un desacoplamiento cuando es el propio daemon, Mutter o la aplicación quien normaliza una geometría, el backend conserva un historial corto de geometrías solicitadas. Las notificaciones coincidentes se reconocen como propias incluso si el WM las repite al enfocar. Una geometría distinta tampoco desacopla por sí sola: debe coincidir con un gesto de puntero iniciado sobre el borde y superar `DRAG_THRESHOLD_PX`. Los movimientos desde la barra de título se clasifican separadamente y los clicks dentro del contenido se ignoran.
 
 ### 5.3 Flujo de invocación Super+Z (secuencia de llamadas)
 

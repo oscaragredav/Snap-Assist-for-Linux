@@ -35,6 +35,7 @@ class UIManager:
         # Referencias a componentes de UI
         self._overlay = None
         self._layout_menu = None
+        self._snap_assist_menu = None
 
     def start(self) -> None:
         """Inicia el hilo de la UI."""
@@ -69,6 +70,7 @@ class UIManager:
         # Inicializar componentes
         from snapassist.ui.overlay import Overlay
         from snapassist.ui.layout_menu import LayoutMenu
+        from snapassist.ui.snap_assist_menu import SnapAssistMenu
         
         self._overlay = Overlay(self._root)
         self._layout_menu = LayoutMenu(
@@ -76,6 +78,11 @@ class UIManager:
             on_selection=self._on_menu_selection,
             on_cancel=self._on_menu_cancel,
             on_hover=self._on_menu_hover
+        )
+        self._snap_assist_menu = SnapAssistMenu(
+            root=self._root,
+            on_selection=self._on_snap_assist_selection,
+            on_cancel=self._on_snap_assist_cancel,
         )
         
         self._poll_queue()
@@ -120,6 +127,15 @@ class UIManager:
             elif action == "hide_menu":
                 self._layout_menu.hide()
                 self._overlay.hide()
+
+            elif action == "show_snap_assist":
+                self._snap_assist_menu.show(
+                    cmd.get("eligible_windows", []),
+                    cmd.get("zone_rect"),
+                )
+
+            elif action == "hide_snap_assist":
+                self._snap_assist_menu.hide()
                 
         except Exception as e:
             logger.error("Error procesando comando UI '%s': %s", action, e)
@@ -152,3 +168,17 @@ class UIManager:
             self._overlay.show(zone_rect)
         else:
             self._overlay.hide()
+
+    def _on_snap_assist_selection(self, wid: int) -> None:
+        self._snap_assist_menu.hide()
+        self._callback_queue.put({
+            "event": "snap_assist_selected",
+            "window_id": wid,
+        })
+
+    def _on_snap_assist_cancel(self, reason: str) -> None:
+        self._snap_assist_menu.hide()
+        self._callback_queue.put({
+            "event": "snap_assist_cancelled",
+            "reason": reason,
+        })

@@ -286,13 +286,13 @@ Implementar el filtro completo de ventanas elegibles para el Snap Assist y verif
 ### Tareas
 - Extender `X11Backend.get_all_windows()` para aplicar los cuatro criterios de elegibilidad: `IsViewable`, ausencia de `_NET_WM_STATE_SKIP_TASKBAR`, tipo `_NET_WM_WINDOW_TYPE_NORMAL`, ausencia de `_NET_WM_STATE_FULLSCREEN` y `_NET_WM_STATE_ABOVE`.
 - Implementar la lógica de inclusión de ventanas de otros workspaces: leer `_NET_WM_DESKTOP` de cada ventana y comparar contra `_NET_CURRENT_DESKTOP`; incluir las de otros workspaces marcándolas con un flag `on_other_workspace=True` en el objeto de ventana.
-- Implementar `State.get_sorted_eligible(all_windows, exclude_wid) -> List[WindowInfo]`: ordenar por posición en `mru_list`, excluir `exclude_wid` (la ventana ya acoplada en la primera zona), excluir ventanas minimizadas, excluir `Always on Top` y fullscreen.
+- Implementar `State.get_sorted_eligible(all_windows, exclude_wid) -> List[WindowInfo]`: ordenar por posición en `mru_list`, excluir `exclude_wid` (la ventana ya acoplada en la primera zona) y asignar quickkeys. Las ventanas minimizadas se mantienen como elegibles.
 - Asignar teclas de acceso rápido a la lista ordenada usando `QUICKKEY_SEQUENCE` de `config.py`.
 - Escribir tests unitarios para: filtro con ventanas de sistema presentes (deben ser excluidas), orden MRU con 5 ventanas en secuencia conocida de enfoque, asignación de quickkeys a lista de 10 ventanas.
 
 ### Criterios técnicos de aceptación
 - `get_all_windows()` no incluye el panel de Zorin, el dock, ni ninguna notificación del sistema.
-- `get_all_windows()` no incluye ventanas minimizadas.
+- `get_all_windows()` incluye ventanas minimizadas, además de las visibles.
 - `get_all_windows()` incluye ventanas de otros workspaces.
 - `get_sorted_eligible()` devuelve las ventanas en el orden correcto según el historial de enfoque real de la sesión, verificable manualmente enfocando ventanas en secuencia conocida.
 - La asignación de quickkeys es biyectiva: dos ventanas distintas no reciben la misma tecla.
@@ -313,7 +313,7 @@ Enfocar las ventanas en este orden: Firefox → Terminal → VSCode → Firefox.
 **Caso 3 — Ventana minimizada**
 Minimizar Firefox. Invocar `get_sorted_eligible()`.
 
-*Resultado esperado:* Firefox no aparece en la lista.
+*Resultado esperado:* Firefox aparece en la lista de sugerencias; al seleccionarlo, el gestor de ventanas lo restaura y lo enfoca antes de acoplarlo.
 
 ---
 
@@ -327,10 +327,10 @@ Implementar el flujo completo del Snap Assist: detección de zonas vacías tras 
 - `snap/snap_flow.py` (completar la segunda mitad del flujo)
 
 ### Tareas
-- Implementar `SnapAssistMenu.show(eligible_windows, zone_rect, quickkeys) -> Optional[int]`: invocar Rofi posicionado dentro del `zone_rect`, mostrar cada ventana con su quickkey destacada, devolver el `window_id` seleccionado o `None`.
+- Implementar `SnapAssistMenu.show(eligible_windows, zone_rect)`: mostrar mediante la UI Tkinter existente un menú posicionado dentro del `zone_rect`, con la quickkey de cada ventana destacada, y devolver el `window_id` seleccionado mediante la cola de callbacks.
 - Implementar la congelación de la lista elegible: capturar `eligible_windows` en el momento exacto del primer acoplamiento y pasarla como argumento fijo a todos los menús de zonas vacías subsiguientes, sin releer el estado del sistema.
 - Implementar el flujo de zonas vacías en `snap_flow.py`: iterar sobre `get_empty_zones()`, abrir `SnapAssistMenu` para cada una secuencialmente, acoplar la ventana seleccionada, actualizar `State` y `GroupManager`.
-- Implementar la política de interrupción involuntaria: si durante el Snap Assist un evento `FocusOut` llega al daemon desde una fuente distinta al proceso Rofi activo, transitar la máquina de estados a IDLE con la política de conservación.
+- Implementar la política de interrupción involuntaria: si durante el Snap Assist el menú recibe `FocusOut` por una fuente externa, transitar la máquina de estados a IDLE con la política de conservación.
 - Implementar la lógica de traslado entre monitores: si la ventana seleccionada está en otro monitor, leer su geometría actual, calcular la zona destino en el monitor activo, ejecutar `move_resize_window`.
 - Implementar la lógica de traslado entre workspaces: si la ventana seleccionada está en otro workspace, enviar `_NET_WM_DESKTOP` para moverla al workspace activo antes de acoplarla.
 - Escribir tests unitarios para: congelación de lista (agregar una ventana después de congelar no modifica la lista activa), asignación de zonas vacías tras primer acoplamiento en cada template.
@@ -391,6 +391,7 @@ Implementar la creación, modificación, disolución y consulta de Snap Groups, 
 - Implementar `GroupManager.validate_group(group_id)`: recorrer `zones`, eliminar referencias a ventanas que ya no existen (verificando contra `get_all_windows()`), disolver si el grupo queda con una sola ventana.
 - Implementar el callback de Super+Alt+Tab: obtener la ventana activa, buscar su grupo con `get_group_for_window`, llamar `validate_group`, invocar `WMBackend.focus_window` sobre cada ventana del grupo en orden de `zone_index`.
 - Implementar el overlay de consulta de grupo (Super+/): invocar `Notifier` con la lista de títulos de las ventanas del grupo activo.
+- Integrar restricciones `WM_NORMAL_HINTS`: una aplicación cuyo tamaño mínimo exceda su zona se mantiene dentro del grupo y se centra con desborde simétrico aplicando la política "Ignorar y Centrar".
 - Escribir tests unitarios para: `create_group` con ventana ya en otro grupo (pertenencia exclusiva), `on_window_destroyed` con grupo que queda en una sola ventana (disolución), `validate_group` con una referencia inválida.
 
 ### Criterios técnicos de aceptación
@@ -399,6 +400,7 @@ Implementar la creación, modificación, disolución y consulta de Snap Groups, 
 - Cerrar una ventana de un grupo de dos ventanas disuelve el grupo: la ventana restante vuelve a estado flotante independiente.
 - `validate_group` elimina referencias inválidas sin crash: verificable cerrando una ventana externamente durante el ciclo de vida del grupo.
 - Todos los tests unitarios pasan.
+- Aplicaciones con tamaño mínimo grande, como Spotify, permanecen agrupadas y el log informa `Ignorar y Centrar` sin interrumpir el flujo.
 
 ### Pruebas funcionales
 

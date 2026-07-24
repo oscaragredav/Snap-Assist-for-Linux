@@ -91,6 +91,15 @@ class SnapGroup:
     # zone_index → window_id (solo zonas ocupadas)
 
 
+@dataclass
+class WindowInfo:
+    """Ventana disponible para Snap Assist y sus metadatos de selección."""
+    window_id: int
+    title: str = ""
+    on_other_workspace: bool = False
+    quickkey: Optional[str] = None
+
+
 class WindowType(Enum):
     """Tipo de ventana según _NET_WM_WINDOW_TYPE."""
     NORMAL = "normal"
@@ -123,7 +132,7 @@ SNAP_ANIMATION_MS   = 200       # duración de transición post-acoplamiento (ms
 DRAG_THRESHOLD_PX   = 8         # umbral de desacoplamiento por mouse (px)
 
 # Teclas de acceso rápido en Snap Assist (orden MRU)
-QUICKKEY_SEQUENCE   = "qwertyu"
+QUICKKEY_SEQUENCE   = "qwertyuiop"
 
 # Overlay de zona
 OVERLAY_OPACITY     = 0.35      # opacidad del overlay (0.0 – 1.0)
@@ -131,6 +140,7 @@ OVERLAY_OPACITY     = 0.35      # opacidad del overlay (0.0 – 1.0)
 # Logging
 LOG_DIR             = "~/.local/share/snapassist"
 LOG_FILE            = "daemon.log"
+ERROR_LOG_FILE      = "errors.log"
 LOG_MAX_BYTES       = 5 * 1024 * 1024   # 5 MB por archivo de log
 LOG_BACKUP_COUNT    = 7                  # mantener 7 archivos rotados
 
@@ -173,7 +183,7 @@ LAYOUT_TEMPLATES: List[LayoutTemplate] = [
     ]),
 
     # Tres columnas iguales
-    LayoutTemplate("1/3 + 1/3 + 1/3", [
+    LayoutTemplate("1:1:1", [
         ZoneTemplate(0.0,   0.0, 0.333, 1.0),
         ZoneTemplate(0.333, 0.0, 0.334, 1.0),
         ZoneTemplate(0.667, 0.0, 0.333, 1.0),

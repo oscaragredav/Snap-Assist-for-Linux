@@ -9,7 +9,7 @@ con ventanas importan esta interfaz, nunca la implementación concreta.
 from abc import ABC, abstractmethod
 from typing import Callable, List, Optional
 
-from snapassist.config import Rect, WindowGeometry, WindowState, WindowType
+from snapassist.config import Rect, WindowGeometry, WindowInfo, WindowState, WindowType
 
 
 class WindowManager(ABC):
@@ -38,11 +38,21 @@ class WindowManager(ABC):
         ...
 
     @abstractmethod
+    def get_eligible_windows(self) -> List[WindowInfo]:
+        """Retorna candidatos de Snap Assist con sus metadatos."""
+        ...
+
+    @abstractmethod
     def get_window_geometry(self, wid: int) -> WindowGeometry:
         """
         Retorna la geometría de la ventana en coordenadas absolutas de pantalla,
         incluyendo estado de maximización.
         """
+        ...
+
+    @abstractmethod
+    def get_window_min_size(self, wid: int) -> tuple[int, int]:
+        """Retorna el tamaño mínimo declarado en WM_NORMAL_HINTS."""
         ...
 
     @abstractmethod
@@ -100,6 +110,16 @@ class WindowManager(ABC):
     def set_window_maximized(self, wid: int, maximized: bool) -> None:
         """Modifica el estado de maximización de una ventana."""
         pass
+
+    @abstractmethod
+    def move_window_to_current_workspace(self, wid: int) -> None:
+        """Traslada una ventana al workspace activo."""
+        ...
+
+    @abstractmethod
+    def window_exists(self, wid: int) -> bool:
+        """Indica si el recurso de ventana todavía existe."""
+        ...
 
     @abstractmethod
     def get_transient_for(self, wid: int) -> Optional[int]:

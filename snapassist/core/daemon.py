@@ -8,6 +8,7 @@ eventos estructurales (Map/Unmap/Destroy/Configure) para fases posteriores.
 """
 
 import logging
+import math
 from typing import Optional
 
 from Xlib import X
@@ -33,12 +34,14 @@ class Daemon:
         state: State,
         hotkey_manager: HotkeyManager,
         ui_callback_queue = None,
+        pointer_event_queue = None,
         snap_flow = None
     ) -> None:
         self._wm = wm_backend
         self._state = state
         self._hotkeys = hotkey_manager
         self._ui_callback_queue = ui_callback_queue
+        self._pointer_event_queue = pointer_event_queue
         self._snap_flow = snap_flow
         
         self._running = False
@@ -46,6 +49,9 @@ class Daemon:
 
         # Átomo de _NET_ACTIVE_WINDOW para comparar en PropertyNotify
         self._atom_active_window = self._display.intern_atom("_NET_ACTIVE_WINDOW")
+        self._drag_starts = {}
+        self._drag_distances = {}
+        self._gesture_modes = {}
 
         logger.info("Daemon inicializado.")
 
@@ -81,6 +87,14 @@ class Daemon:
                         while True:
                             msg = self._ui_callback_queue.get_nowait()
                             self._handle_ui_callback(msg)
+                    except queue.Empty:
+                        pass
+
+                if self._pointer_event_queue:
+                    import queue
+                    try:
+                        while True:
+                            self._handle_pointer_event(self._pointer_event_queue.get_nowait())
                     except queue.Empty:
                         pass
 
@@ -133,6 +147,11 @@ class Daemon:
                 logger.debug("DestroyNotify: ventana 0x%x", wid)
                 # Limpiar la ventana de la lista MRU
                 self._state.remove_from_mru(wid)
+                self._drag_starts.pop(wid, None)
+                self._drag_distances.pop(wid, None)
+                self._gesture_modes.pop(wid, None)
+                if self._snap_flow:
+                    self._snap_flow.on_window_destroyed(wid)
 
         elif event_type == X.ConfigureNotify:
             wid = self._extract_wid(event)
@@ -145,6 +164,29 @@ class Daemon:
                     getattr(event, 'width', 0),
                     getattr(event, 'height', 0),
                 )
+                if self._consume_own_resize(wid, event):
+                    logger.debug("ConfigureNotify propio consumido: 0x%x", wid)
+                elif self._state.is_snapped(wid) and self._snap_flow:
+                    # Muchas aplicaciones (Terminal, Electron/WhatsApp, Spotify)
+                    # y Mutter emiten ajustes propios al mapear o cambiar foco.
+                    # Sólo un gesto de puntero confirmado desacopla la ventana.
+                    logger.debug(
+                        "ConfigureNotify no propio ignorado sin gesto de usuario: 0x%x",
+                        wid,
+                    )
+
+        elif event_type == X.ButtonPress:
+            self._handle_button_press(event)
+
+        elif event_type == X.MotionNotify:
+            self._handle_motion_notify(event)
+
+        elif event_type == X.ButtonRelease:
+            wid = self._extract_wid(event)
+            if wid:
+                self._drag_starts.pop(wid, None)
+                self._drag_distances.pop(wid, None)
+                self._gesture_modes.pop(wid, None)
 
     # ------------------------------------------------------------------
     # Handlers específicos
@@ -173,6 +215,117 @@ class Daemon:
             self._state.update_mru(active_wid)
         else:
             logger.debug("Ventana activa: ninguna (foco en escritorio).")
+
+    def _handle_button_press(self, event) -> None:
+        wid = self._extract_wid(event)
+        if not wid or not self._state.is_snapped(wid):
+            return
+        self._drag_starts[wid] = (getattr(event, "root_x", 0), getattr(event, "root_y", 0))
+        self._drag_distances[wid] = 0.0
+        self._gesture_modes[wid] = "drag"
+
+    def _handle_motion_notify(self, event) -> None:
+        wid = self._extract_wid(event)
+        if not wid or wid not in self._drag_starts or not self._state.is_snapped(wid):
+            return
+
+        previous_x, previous_y = self._drag_starts[wid]
+        current_x = getattr(event, "root_x", previous_x)
+        current_y = getattr(event, "root_y", previous_y)
+        self._drag_distances[wid] += math.hypot(current_x - previous_x, current_y - previous_y)
+        self._drag_starts[wid] = (current_x, current_y)
+
+        from snapassist.config import DRAG_THRESHOLD_PX
+        if self._drag_distances[wid] >= DRAG_THRESHOLD_PX:
+            logger.info("Drag intencional detectado en 0x%x (%.1f px)", wid, self._drag_distances[wid])
+            self._drag_starts.pop(wid, None)
+            self._drag_distances.pop(wid, None)
+            if self._snap_flow:
+                mode = getattr(self, "_gesture_modes", {}).pop(wid, "drag")
+                if mode == "resize":
+                    self._snap_flow.on_window_resized(wid)
+                else:
+                    self._snap_flow.on_window_dragged(wid)
+
+    def _consume_own_resize(self, wid: int, event=None) -> bool:
+        """Consume una notificación propia si el backend puede identificarla."""
+        consume = getattr(self._wm, "consume_own_resize", None)
+        if not consume:
+            return False
+        try:
+            return bool(consume(wid, event))
+        except TypeError:
+            # Compatibilidad con mocks y backends de fases anteriores.
+            return bool(consume(wid))
+
+    def _handle_pointer_event(self, event) -> None:
+        """Procesa eventos globales de pynput en el hilo seguro de X11."""
+        event_name = event.get("event")
+        x, y = event.get("x", 0), event.get("y", 0)
+        if event_name == "pointer_press":
+            active_wid = self._wm.get_active_window()
+            if active_wid and self._state.is_snapped(active_wid):
+                mode = self._classify_pointer_gesture(active_wid, x, y)
+                if mode:
+                    self._drag_starts[active_wid] = (x, y)
+                    self._drag_distances[active_wid] = 0.0
+                    self._gesture_modes[active_wid] = mode
+        elif event_name == "pointer_move":
+            for wid in list(self._drag_starts):
+                self._handle_drag_motion(wid, x, y)
+        elif event_name == "pointer_release":
+            self._drag_starts.clear()
+            self._drag_distances.clear()
+            self._gesture_modes.clear()
+
+    def _handle_drag_motion(self, wid: int, current_x: int, current_y: int) -> None:
+        """Acumula el movimiento y desacopla al superar el umbral."""
+        if wid not in self._drag_starts or not self._state.is_snapped(wid):
+            return
+        previous_x, previous_y = self._drag_starts[wid]
+        self._drag_distances[wid] += math.hypot(current_x - previous_x, current_y - previous_y)
+        self._drag_starts[wid] = (current_x, current_y)
+
+        from snapassist.config import DRAG_THRESHOLD_PX
+        if self._drag_distances[wid] >= DRAG_THRESHOLD_PX:
+            logger.info("Drag intencional detectado en 0x%x (%.1f px)", wid, self._drag_distances[wid])
+            self._drag_starts.pop(wid, None)
+            self._drag_distances.pop(wid, None)
+            if self._snap_flow:
+                mode = getattr(self, "_gesture_modes", {}).pop(wid, "drag")
+                if mode == "resize":
+                    self._snap_flow.on_window_resized(wid)
+                else:
+                    self._snap_flow.on_window_dragged(wid)
+
+    def _classify_pointer_gesture(self, wid: int, x: int, y: int):
+        """Distingue resize de borde, drag de título y clicks de contenido."""
+        rect = self._wm.get_window_geometry(wid).rect
+        edge_margin = 16
+        titlebar_height = 60
+        within_x = rect.x - edge_margin <= x <= rect.right + edge_margin
+        within_y = rect.y - edge_margin <= y <= rect.bottom + edge_margin
+        near_edge = (
+            within_y
+            and (
+                abs(x - rect.x) <= edge_margin
+                or abs(x - rect.right) <= edge_margin
+            )
+        ) or (
+            within_x
+            and (
+                abs(y - rect.y) <= edge_margin
+                or abs(y - rect.bottom) <= edge_margin
+            )
+        )
+        if near_edge:
+            return "resize"
+        if (
+            rect.x <= x <= rect.right
+            and rect.y <= y <= rect.y + titlebar_height
+        ):
+            return "drag"
+        return None
 
     # ------------------------------------------------------------------
     # Utilidades
@@ -204,3 +357,9 @@ class Daemon:
             
         elif event == "layout_cancelled":
             self._snap_flow.cancel()
+
+        elif event == "snap_assist_selected":
+            self._snap_flow.confirm_assist_selection(msg.get("window_id"))
+
+        elif event == "snap_assist_cancelled":
+            self._snap_flow.cancel_snap_assist(msg.get("reason", "escape"))

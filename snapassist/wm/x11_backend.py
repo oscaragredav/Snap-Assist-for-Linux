@@ -14,6 +14,7 @@ from Xlib.error import BadWindow, BadDrawable
 
 from snapassist.config import (
     Rect,
+    WindowInfo,
     WindowGeometry,
     WindowState,
     WindowType,
@@ -74,6 +75,8 @@ class X11Backend(WindowManager):
             "_NET_WM_STATE_SKIP_TASKBAR": self._display.intern_atom(
                 "_NET_WM_STATE_SKIP_TASKBAR"
             ),
+            "_NET_WM_DESKTOP": self._display.intern_atom("_NET_WM_DESKTOP"),
+            "_NET_CURRENT_DESKTOP": self._display.intern_atom("_NET_CURRENT_DESKTOP"),
             "WM_TRANSIENT_FOR": self._display.intern_atom("WM_TRANSIENT_FOR"),
             "UTF8_STRING": self._display.intern_atom("UTF8_STRING"),
             "_GTK_FRAME_EXTENTS": self._display.intern_atom("_GTK_FRAME_EXTENTS"),
@@ -94,6 +97,9 @@ class X11Backend(WindowManager):
         # Se usa para distinguir resizes propios de resizes externos en
         # ConfigureNotify (ver arquitectura §5.2).
         self._pending_own_resizes: set[int] = set()
+        # Historial corto de geometrías X11 solicitadas por el daemon. Algunos
+        # gestores vuelven a emitirlas al mapear/enfocar una ventana.
+        self._own_resize_geometries: dict[int, list[tuple[int, int, int, int]]] = {}
 
         logger.info(
             "Backend X11 inicializado. Root window: 0x%x",
@@ -122,18 +128,71 @@ class X11Backend(WindowManager):
 
     def get_all_windows(self) -> List[int]:
         """
-        Retorna la lista de window_ids de _NET_CLIENT_LIST.
-        En esta fase no aplica filtros de elegibilidad (se agregan en Fase 6).
+        Retorna los window_ids elegibles de _NET_CLIENT_LIST.
+
+        Las ventanas minimizadas se incluyen deliberadamente: aunque X11 las
+        reporte como no visibles, Snap Assist puede restaurarlas al enfocarlas.
         """
         try:
             prop = self._root.get_full_property(
                 self._atoms["_NET_CLIENT_LIST"], X.AnyPropertyType
             )
             if prop and prop.value is not None:
-                return [int(wid) for wid in prop.value]
+                return [int(wid) for wid in prop.value if self._is_eligible_window(int(wid))]
         except Exception as e:
             logger.error("Error leyendo _NET_CLIENT_LIST: %s", e)
         return []
+
+    def get_eligible_windows(self) -> List[WindowInfo]:
+        """Retorna las ventanas elegibles con título y estado de workspace."""
+        return [
+            WindowInfo(
+                window_id=wid,
+                title=self.get_window_title(wid),
+                on_other_workspace=self._is_on_other_workspace(wid),
+            )
+            for wid in self.get_all_windows()
+        ]
+
+    def _is_eligible_window(self, wid: int) -> bool:
+        """Aplica el filtro de Fase 6 sin excluir ventanas minimizadas."""
+        try:
+            window = self._display.create_resource_object("window", wid)
+            attributes = window.get_attributes()
+            states = self._get_wm_states(wid)
+            minimized = self._atoms["_NET_WM_STATE_HIDDEN"] in states
+            visible = attributes.map_state == X.IsViewable
+
+            return (
+                (visible or minimized)
+                and self.get_window_type(wid) == WindowType.NORMAL
+                and self._atoms["_NET_WM_STATE_SKIP_TASKBAR"] not in states
+                and self._atoms["_NET_WM_STATE_FULLSCREEN"] not in states
+                and self._atoms["_NET_WM_STATE_ABOVE"] not in states
+            )
+        except (BadWindow, BadDrawable):
+            return False
+        except Exception as e:
+            logger.error("Error filtrando ventana 0x%x: %s", wid, e)
+            return False
+
+    def _is_on_other_workspace(self, wid: int) -> bool:
+        """Indica si la ventana pertenece a un workspace distinto del actual."""
+        try:
+            window = self._display.create_resource_object("window", wid)
+            desktop = window.get_full_property(self._atoms["_NET_WM_DESKTOP"], X.AnyPropertyType)
+            current = self._root.get_full_property(
+                self._atoms["_NET_CURRENT_DESKTOP"], X.AnyPropertyType
+            )
+            if not desktop or not desktop.value or not current or not current.value:
+                return False
+            # 0xFFFFFFFF significa "todos los escritorios" según EWMH.
+            return int(desktop.value[0]) not in (int(current.value[0]), 0xFFFFFFFF)
+        except (BadWindow, BadDrawable):
+            return False
+        except Exception as e:
+            logger.error("Error leyendo workspace de 0x%x: %s", wid, e)
+            return False
 
     def get_window_geometry(self, wid: int) -> WindowGeometry:
         """
@@ -172,6 +231,44 @@ class X11Backend(WindowManager):
         except Exception as e:
             logger.error("Error leyendo geometría de 0x%x: %s", wid, e)
             return WindowGeometry(rect=Rect(0, 0, 0, 0))
+
+    def get_window_min_size(self, wid: int) -> tuple[int, int]:
+        """Lee min_width/min_height de WM_NORMAL_HINTS."""
+        try:
+            window = self._display.create_resource_object("window", wid)
+            hints = window.get_wm_normal_hints()
+            if not hints:
+                return (1, 1)
+
+            def hint_value(name: str) -> int:
+                try:
+                    value = getattr(hints, name)
+                except (AttributeError, KeyError):
+                    try:
+                        value = hints[name]
+                    except (KeyError, TypeError):
+                        value = 1
+                return max(1, int(value or 1))
+
+            return (
+                hint_value("min_width"),
+                hint_value("min_height"),
+            )
+        except (BadWindow, BadDrawable):
+            return (1, 1)
+        except Exception as e:
+            logger.debug("Sin tamaño mínimo para 0x%x: %s", wid, e)
+            return (1, 1)
+
+    def window_exists(self, wid: int) -> bool:
+        try:
+            window = self._display.create_resource_object("window", wid)
+            window.get_attributes()
+            return True
+        except (BadWindow, BadDrawable):
+            return False
+        except Exception:
+            return False
 
     def get_window_title(self, wid: int) -> str:
         """
@@ -378,9 +475,36 @@ class X11Backend(WindowManager):
             adj_y = rect.y - top
             adj_w = rect.w + left + right
             adj_h = rect.h + top + bottom
+            expected_geometry = (adj_x, adj_y, adj_w, adj_h)
+            history = self._own_resize_geometries.setdefault(wid, [])
+            if expected_geometry not in history:
+                history.append(expected_geometry)
+                del history[:-64]
             
-            # En X11, window.configure() con x, y, width, height solicita 
-            # el cambio al gestor de ventanas a través de un ConfigureRequest
+            flags = (
+                (1 << 8)   # x
+                | (1 << 9)  # y
+                | (1 << 10) # width
+                | (1 << 11) # height
+                | (1 << 12) # source indication: aplicación
+            )
+            moveresize_event = xevent.ClientMessage(
+                window=window,
+                client_type=self._atoms["_NET_MOVERESIZE_WINDOW"],
+                data=(32, [
+                    flags,
+                    self._to_card32(adj_x),
+                    self._to_card32(adj_y),
+                    self._to_card32(adj_w),
+                    self._to_card32(adj_h),
+                ]),
+            )
+            self._root.send_event(
+                moveresize_event,
+                event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask,
+            )
+
+            # Fallback ConfigureRequest para gestores que no implementen EWMH.
             window.configure(
                 x=adj_x,
                 y=adj_y,
@@ -397,8 +521,53 @@ class X11Backend(WindowManager):
             logger.warning("move_resize_window falló: ventana 0x%x desapareció", wid)
             self._pending_own_resizes.discard(wid)
         except Exception as e:
-            logger.error("Error al mover/redimensionar 0x%x: %s", wid, e)
+            logger.error(
+                "Error al mover/redimensionar 0x%x: %s",
+                wid,
+                e,
+                exc_info=True,
+            )
             self._pending_own_resizes.discard(wid)
+
+    @staticmethod
+    def _to_card32(value: int) -> int:
+        """Codifica enteros con signo como CARD32 para ClientMessage X11."""
+        return int(value) & 0xFFFFFFFF
+
+    def watch_snapped_window(self, wid: int) -> None:
+        """Solicita los eventos de puntero necesarios para detectar un drag.
+
+        La selección se limita a la ventana acoplada; así el daemon no recibe
+        movimiento del ratón de todas las ventanas de la sesión.
+        """
+        try:
+            window = self._display.create_resource_object("window", wid)
+            window.change_attributes(
+                event_mask=X.ButtonPressMask | X.ButtonReleaseMask | X.PointerMotionMask
+            )
+            self._display.flush()
+        except (BadWindow, BadDrawable):
+            logger.debug("No se pudo observar la ventana desaparecida 0x%x", wid)
+        except Exception as e:
+            logger.error("Error observando eventos de puntero de 0x%x: %s", wid, e)
+
+    def consume_own_resize(self, wid: int, event=None) -> bool:
+        """Reconoce ConfigureNotify propios, incluso si el WM los repite."""
+        if event is not None:
+            geometry = (
+                int(getattr(event, "x", 0)),
+                int(getattr(event, "y", 0)),
+                int(getattr(event, "width", 0)),
+                int(getattr(event, "height", 0)),
+            )
+            if geometry in self._own_resize_geometries.get(wid, []):
+                self._pending_own_resizes.discard(wid)
+                return True
+
+        if wid in self._pending_own_resizes:
+            self._pending_own_resizes.discard(wid)
+            return True
+        return False
 
     def focus_window(self, wid: int) -> None:
         """
@@ -478,6 +647,37 @@ class X11Backend(WindowManager):
             pass
         except Exception as e:
             logger.error("Error modificando estado maximizado de 0x%x: %s", wid, e)
+
+    def move_window_to_current_workspace(self, wid: int) -> None:
+        """Mueve una ventana al workspace activo mediante EWMH."""
+        try:
+            current = self._root.get_full_property(
+                self._atoms["_NET_CURRENT_DESKTOP"], X.AnyPropertyType
+            )
+            if not current or not current.value:
+                logger.warning("No se pudo determinar el workspace actual")
+                return
+
+            window = self._display.create_resource_object("window", wid)
+            event = xevent.ClientMessage(
+                window=window,
+                client_type=self._atoms["_NET_WM_DESKTOP"],
+                data=(32, [int(current.value[0]), 1, 0, 0, 0]),
+            )
+            self._root.send_event(
+                event,
+                event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask,
+            )
+            self._display.flush()
+            logger.info(
+                "Ventana 0x%x trasladada al workspace %d",
+                wid,
+                int(current.value[0]),
+            )
+        except (BadWindow, BadDrawable):
+            logger.warning("No se pudo trasladar 0x%x: la ventana desapareció", wid)
+        except Exception as e:
+            logger.error("Error trasladando 0x%x al workspace actual: %s", wid, e)
 
     # ------------------------------------------------------------------
     # Acceso al display (para el daemon event loop)

@@ -18,17 +18,20 @@ import logging.handlers
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 
 from snapassist.config import (
-    LOG_DIR, LOG_FILE, LOG_MAX_BYTES, LOG_BACKUP_COUNT,
-    HOTKEY_LAYOUT_MENU, LAYOUT_TEMPLATES,
+    ERROR_LOG_FILE, LOG_DIR, LOG_FILE, LOG_MAX_BYTES, LOG_BACKUP_COUNT,
+    HOTKEY_HELP, HOTKEY_LAYOUT_MENU, HOTKEY_SNAP_GROUPS, LAYOUT_TEMPLATES,
 )
 from snapassist.core.daemon import Daemon
 from snapassist.core.hotkeys import HotkeyManager
 from snapassist.core.state import State
 from snapassist.layout.engine import LayoutEngine
 from snapassist.snap.snapper import SnapEngine
+from snapassist.snap.group_manager import GroupManager
+from snapassist.ui.notifier import Notifier
 
 
 def setup_logging() -> None:
@@ -44,6 +47,7 @@ def setup_logging() -> None:
     log_dir = Path(LOG_DIR).expanduser()
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / LOG_FILE
+    error_log_path = log_dir / ERROR_LOG_FILE
 
     # Formato de log
     formatter = logging.Formatter(
@@ -61,16 +65,49 @@ def setup_logging() -> None:
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
 
-    # Handler de consola
+    error_file_handler = logging.handlers.RotatingFileHandler(
+        filename=str(error_log_path),
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
+        encoding="utf-8",
+    )
+    error_file_handler.setLevel(logging.ERROR)
+    error_file_handler.setFormatter(formatter)
+
+    class DuplicateConsoleFilter(logging.Filter):
+        """Evita inundar la terminal con el mismo mensaje en una animación."""
+
+        def __init__(self, interval_seconds: float = 5.0) -> None:
+            super().__init__()
+            self.interval_seconds = interval_seconds
+            self._last_seen = {}
+
+        def filter(self, record) -> bool:
+            key = (record.name, record.levelno, record.getMessage())
+            now = time.monotonic()
+            previous = self._last_seen.get(key, 0.0)
+            self._last_seen[key] = now
+            return now - previous >= self.interval_seconds
+
+    # La terminal muestra sólo advertencias y errores no repetidos. El detalle
+    # completo continúa en daemon.log y los errores se duplican en errors.log.
     console_handler = logging.StreamHandler(sys.stderr)
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(logging.WARNING)
     console_handler.setFormatter(formatter)
+    console_handler.addFilter(DuplicateConsoleFilter())
 
     # Configurar root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
     root_logger.addHandler(file_handler)
+    root_logger.addHandler(error_file_handler)
     root_logger.addHandler(console_handler)
+
+    logging.getLogger(__name__).info(
+        "Logs: actividad=%s | errores=%s",
+        log_path,
+        error_log_path,
+    )
 
 
 def detect_and_create_backend():
@@ -216,10 +253,13 @@ def main() -> None:
     state = State()
     layout_engine = LayoutEngine(gap_px=0)
     snap_engine = SnapEngine(wm_backend, state, layout_engine)
+    group_manager = GroupManager(state, wm_backend)
 
+    pointer_event_queue = queue.Queue()
     hotkey_manager = HotkeyManager(
         display_obj=wm_backend.get_display(),
         root_window=wm_backend.root,
+        pointer_event_queue=pointer_event_queue,
     )
     
     # 5. Inicializar UI en hilo separado
@@ -228,7 +268,13 @@ def main() -> None:
     ui_manager.start()
     
     # 6. Máquina de estados interactiva (Fase 4)
-    snap_flow = SnapFlow(wm_backend, state, snap_engine, ui_manager)
+    snap_flow = SnapFlow(
+        wm_backend,
+        state,
+        snap_engine,
+        ui_manager,
+        group_manager=group_manager,
+    )
 
     def on_super_z():
         # Este callback es llamado por HotkeyManager en el hilo principal
@@ -241,6 +287,39 @@ def main() -> None:
             HOTKEY_LAYOUT_MENU,
         )
 
+    def on_snap_group():
+        active_wid = wm_backend.get_active_window()
+        group = (
+            group_manager.focus_group_for_window(active_wid)
+            if active_wid else None
+        )
+        if not group:
+            Notifier.send("La ventana activa no pertenece a un Snap Group.")
+
+    def on_help():
+        active_wid = wm_backend.get_active_window()
+        group = group_manager.get_group_for_window(active_wid) if active_wid else None
+        lines = [
+            "Super+Z — layouts",
+            "Super+Alt+Tab — traer grupo al frente",
+            "Super+/ — ayuda y estado",
+            "",
+            f"Grupos activos: {len(state.active_groups)}",
+            f"Ventanas monitoreadas: {len(wm_backend.get_all_windows())}",
+        ]
+        if group:
+            titles = [
+                wm_backend.get_window_title(wid)
+                for wid in group_manager.get_all_windows_in_group(group.group_id)
+            ]
+            lines.extend(["", "Grupo activo:", *[f"• {title}" for title in titles]])
+        Notifier.send("\n".join(lines), timeout_ms=6000)
+
+    if not hotkey_manager.register(HOTKEY_SNAP_GROUPS, on_snap_group):
+        logger.error("No se pudo registrar el atajo '%s'.", HOTKEY_SNAP_GROUPS)
+    if not hotkey_manager.register(HOTKEY_HELP, on_help):
+        logger.error("No se pudo registrar el atajo '%s'.", HOTKEY_HELP)
+
     logger.info(
         "Atajos registrados: %s",
         ", ".join(hotkey_manager.get_registered_hotkeys()),
@@ -252,6 +331,7 @@ def main() -> None:
         state=state,
         hotkey_manager=hotkey_manager,
         ui_callback_queue=ui_callback_queue,
+        pointer_event_queue=pointer_event_queue,
         snap_flow=snap_flow
     )
 
