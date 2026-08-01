@@ -73,6 +73,7 @@ class GroupManager:
         return [wid for _, wid in sorted(group.zones.items())]
 
     def on_window_destroyed(self, wid: int) -> None:
+        self._release_snap_constraints(wid)
         group = self.get_group_for_window(wid)
         if group:
             self._remove_member(group, wid)
@@ -80,6 +81,7 @@ class GroupManager:
         self._state.restore_geometry(wid)
 
     def on_window_detached(self, wid: int) -> None:
+        self._release_snap_constraints(wid)
         group = self.get_group_for_window(wid)
         if group:
             self._remove_member(group, wid)
@@ -130,7 +132,13 @@ class GroupManager:
                 # La ventana conserva su geometría actual, pero deja de tener
                 # una geometría flotante pendiente al convertirse en independiente.
                 self._state.restore_geometry(wid)
+                self._release_snap_constraints(wid)
         logger.info("Snap Group disuelto: %s", group_id)
+
+    def _release_snap_constraints(self, wid: int) -> None:
+        release = getattr(self._wm, "release_window_from_snap", None)
+        if release:
+            release(wid)
 
     def _remove_member(
         self,

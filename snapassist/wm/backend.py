@@ -101,6 +101,15 @@ class WindowManager(ABC):
         """
         ...
 
+    def prepare_window_for_snap(self, wid: int) -> None:
+        """Prepara restricciones del cliente para ocupar una zona exacta.
+
+        Los backends que no necesiten preparación pueden conservar este no-op.
+        """
+
+    def release_window_from_snap(self, wid: int) -> None:
+        """Restaura las restricciones alteradas durante el acoplamiento."""
+
     @abstractmethod
     def focus_window(self, wid: int) -> None:
         """Pide el foco para la ventana dada."""

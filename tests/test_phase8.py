@@ -12,6 +12,7 @@ from snapassist.snap.group_manager import GroupManager
 from snapassist.snap.snapper import SnapEngine
 from snapassist.core.hotkeys import parse_hotkey
 from snapassist.wm.x11_backend import X11Backend
+from Xlib import Xutil
 
 
 class MockWM:
@@ -132,6 +133,52 @@ def test_negative_x11_coordinates_are_encoded_as_card32():
     assert X11Backend._to_card32(960) == 960
 
 
+def test_snap_hints_disable_size_quantization_but_keep_minimum():
+    original_flags = (
+        Xutil.PMinSize
+        | Xutil.PMaxSize
+        | Xutil.PResizeInc
+        | Xutil.PAspect
+        | Xutil.PBaseSize
+    )
+    original = {
+        "flags": original_flags,
+        "min_width": 417,
+        "min_height": 184,
+        "max_width": 1600,
+        "max_height": 1000,
+        "width_inc": 8,
+        "height_inc": 18,
+        "base_width": 110,
+        "base_height": 140,
+    }
+
+    normalized = X11Backend._normalize_snap_hints(original)
+
+    assert normalized["flags"] & Xutil.PMinSize
+    assert not normalized["flags"] & Xutil.PMaxSize
+    assert not normalized["flags"] & Xutil.PResizeInc
+    assert not normalized["flags"] & Xutil.PAspect
+    assert not normalized["flags"] & Xutil.PBaseSize
+    assert (normalized["width_inc"], normalized["height_inc"]) == (1, 1)
+    assert (original["width_inc"], original["height_inc"]) == (8, 18)
+
+
+def test_csd_extents_are_compensated_for_every_declaring_client():
+    zone = Rect(1281, 0, 639, 1036)
+
+    assert X11Backend._compensate_csd_rect(
+        zone, (47, 47, 37, 57)
+    ) == Rect(1234, -37, 733, 1130)
+    assert X11Backend._compensate_csd_rect(
+        zone, (0, 0, 0, 0)
+    ) == zone
+    buffer_rect = Rect(1234, -37, 733, 1130)
+    assert X11Backend._visible_rect_from_buffer(
+        buffer_rect, (47, 47, 37, 57)
+    ) == zone
+
+
 def run_all_tests():
     tests = [
         test_exclusive_membership_dissolves_previous_singleton,
@@ -141,6 +188,8 @@ def run_all_tests():
         test_spotify_like_minimum_size_is_centered_but_stays_groupable,
         test_phase8_hotkeys_are_parseable,
         test_negative_x11_coordinates_are_encoded_as_card32,
+        test_snap_hints_disable_size_quantization_but_keep_minimum,
+        test_csd_extents_are_compensated_for_every_declaring_client,
     ]
     for test in tests:
         test()

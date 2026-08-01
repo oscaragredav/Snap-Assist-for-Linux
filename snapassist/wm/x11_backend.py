@@ -8,7 +8,7 @@ mediante los átomos EWMH estándar.
 import logging
 from typing import List, Optional
 
-from Xlib import X, display, Xatom
+from Xlib import X, Xutil, display, Xatom
 from Xlib.protocol import event as xevent
 from Xlib.error import BadWindow, BadDrawable
 
@@ -41,6 +41,7 @@ class X11Backend(WindowManager):
         self._atoms = {
             "_NET_CLIENT_LIST": self._display.intern_atom("_NET_CLIENT_LIST"),
             "_NET_ACTIVE_WINDOW": self._display.intern_atom("_NET_ACTIVE_WINDOW"),
+            "_NET_SUPPORTED": self._display.intern_atom("_NET_SUPPORTED"),
             "_NET_WORKAREA": self._display.intern_atom("_NET_WORKAREA"),
             "_NET_WM_NAME": self._display.intern_atom("_NET_WM_NAME"),
             "_NET_WM_WINDOW_TYPE": self._display.intern_atom("_NET_WM_WINDOW_TYPE"),
@@ -100,6 +101,12 @@ class X11Backend(WindowManager):
         # Historial corto de geometrías X11 solicitadas por el daemon. Algunos
         # gestores vuelven a emitirlas al mapear/enfocar una ventana.
         self._own_resize_geometries: dict[int, list[tuple[int, int, int, int]]] = {}
+        # Restricciones ICCCM originales que se suspenden mientras una ventana
+        # está acoplada. Terminales suelen cuantizar el tamaño por caracteres.
+        self._saved_normal_hints: dict[int, Optional[dict]] = {}
+        self._supports_moveresize = self._root_supports_atom(
+            self._atoms["_NET_MOVERESIZE_WINDOW"]
+        )
 
         logger.info(
             "Backend X11 inicializado. Root window: 0x%x",
@@ -206,11 +213,10 @@ class X11Backend(WindowManager):
             window = self._display.create_resource_object("window", wid)
             geom = window.get_geometry()
 
-            # Traducir coordenadas relativas al padre a absolutas (root)
-            translated = window.translate_coords(self._root, 0, 0)
-            # translate_coords retorna las coordenadas del punto (0,0)
-            # de la ventana hija en el sistema de coordenadas del root,
-            # pero con signo invertido para nuestro propósito
+            # En python-xlib ``destino.translate_coords(origen, ...)``. La
+            # llamada anterior estaba invertida y devolvía el origen del root
+            # visto desde la ventana (signos x/y contrarios).
+            translated = self._root.translate_coords(window, 0, 0)
             abs_x = translated.x
             abs_y = translated.y
 
@@ -221,10 +227,11 @@ class X11Backend(WindowManager):
                 and self._atoms["_NET_WM_STATE_MAXIMIZED_HORZ"] in states
             )
 
-            return WindowGeometry(
-                rect=Rect(x=abs_x, y=abs_y, w=geom.width, h=geom.height),
-                is_maximized=is_maximized,
+            buffer_rect = Rect(abs_x, abs_y, geom.width, geom.height)
+            visible_rect = self._visible_rect_from_buffer(
+                buffer_rect, self._get_frame_extents(window)
             )
+            return WindowGeometry(rect=visible_rect, is_maximized=is_maximized)
         except (BadWindow, BadDrawable) as e:
             logger.warning("Ventana 0x%x desaparecida al leer geometría: %s", wid, e)
             return WindowGeometry(rect=Rect(0, 0, 0, 0))
@@ -440,6 +447,79 @@ class X11Backend(WindowManager):
     # Métodos de acción (stubs en Fase 1)
     # ------------------------------------------------------------------
 
+    def prepare_window_for_snap(self, wid: int) -> None:
+        """Suspende restricciones que impiden llenar una zona píxel a píxel.
+
+        Se conserva ``PMinSize`` para no forzar una aplicación por debajo del
+        tamaño que puede representar. Los incrementos de celda, el aspecto y
+        el máximo se restauran al desacoplar la ventana.
+        """
+        try:
+            window = self._display.create_resource_object("window", wid)
+            if wid not in self._saved_normal_hints:
+                hints = window.get_wm_normal_hints()
+                original = dict(hints._data) if hints else None
+                self._saved_normal_hints[wid] = original
+            else:
+                original = self._saved_normal_hints[wid]
+
+            if not original:
+                return
+
+            normalized = self._normalize_snap_hints(original)
+            if normalized != original:
+                window.set_wm_normal_hints(normalized)
+                self._display.flush()
+                logger.debug(
+                    "Restricciones geométricas suspendidas para 0x%x "
+                    "(incremento original=%dx%d)",
+                    wid,
+                    int(original.get("width_inc", 1) or 1),
+                    int(original.get("height_inc", 1) or 1),
+                )
+        except (BadWindow, BadDrawable):
+            self._saved_normal_hints.pop(wid, None)
+        except Exception as e:
+            logger.warning(
+                "No se pudieron normalizar restricciones de 0x%x: %s", wid, e
+            )
+
+    def release_window_from_snap(self, wid: int) -> None:
+        """Restaura WM_NORMAL_HINTS cuando la ventana deja SnapAssist."""
+        if wid not in self._saved_normal_hints:
+            return
+        original = self._saved_normal_hints.pop(wid)
+        if not original:
+            return
+        try:
+            window = self._display.create_resource_object("window", wid)
+            window.set_wm_normal_hints(original)
+            self._display.flush()
+            logger.debug("Restricciones geométricas restauradas para 0x%x", wid)
+        except (BadWindow, BadDrawable):
+            pass
+        except Exception as e:
+            logger.warning(
+                "No se pudieron restaurar restricciones de 0x%x: %s", wid, e
+            )
+
+    @staticmethod
+    def _normalize_snap_hints(hints: dict) -> dict:
+        """Devuelve hints ICCCM sin cuantización, aspecto ni máximo."""
+        normalized = dict(hints)
+        ignored_flags = (
+            Xutil.PResizeInc
+            | Xutil.PAspect
+            | Xutil.PBaseSize
+            | Xutil.PMaxSize
+        )
+        normalized["flags"] = int(normalized.get("flags", 0)) & ~ignored_flags
+        normalized["width_inc"] = 1
+        normalized["height_inc"] = 1
+        normalized["base_width"] = 0
+        normalized["base_height"] = 0
+        return normalized
+
     def _get_frame_extents(self, window) -> tuple[int, int, int, int]:
         """
         Retorna (left, right, top, bottom) leyendo _GTK_FRAME_EXTENTS.
@@ -460,22 +540,24 @@ class X11Backend(WindowManager):
     def move_resize_window(self, wid: int, rect: Rect) -> None:
         """
         Mueve y redimensiona una ventana en X11.
-        Compensa los márgenes de sombra GTK (_GTK_FRAME_EXTENTS) para que el
-        resultado visual coincida con el Rect solicitado.
+
+        Las sombras CSD forman parte del búfer X11, por lo que se compensan a
+        partir de ``_GTK_FRAME_EXTENTS``. La petición se envía una sola vez por
+        EWMH: un ConfigureRequest adicional competiría con el gestor y podría
+        recortar o sobrescribir el resultado.
         """
         try:
             window = self._display.create_resource_object('window', wid)
             self._pending_own_resizes.add(wid)
-            
-            # Obtener sombras invisibles (extents)
-            left, right, top, bottom = self._get_frame_extents(window)
-            
-            # Ajustar para que el contenido visual caiga exactamente en 'rect'
-            adj_x = rect.x - left
-            adj_y = rect.y - top
-            adj_w = rect.w + left + right
-            adj_h = rect.h + top + bottom
-            expected_geometry = (adj_x, adj_y, adj_w, adj_h)
+
+            extents = self._get_frame_extents(window)
+            requested_rect = self._compensate_csd_rect(rect, extents)
+            expected_geometry = (
+                requested_rect.x,
+                requested_rect.y,
+                requested_rect.w,
+                requested_rect.h,
+            )
             history = self._own_resize_geometries.setdefault(wid, [])
             if expected_geometry not in history:
                 history.append(expected_geometry)
@@ -488,34 +570,34 @@ class X11Backend(WindowManager):
                 | (1 << 11) # height
                 | (1 << 12) # source indication: aplicación
             )
-            moveresize_event = xevent.ClientMessage(
-                window=window,
-                client_type=self._atoms["_NET_MOVERESIZE_WINDOW"],
-                data=(32, [
-                    flags,
-                    self._to_card32(adj_x),
-                    self._to_card32(adj_y),
-                    self._to_card32(adj_w),
-                    self._to_card32(adj_h),
-                ]),
-            )
-            self._root.send_event(
-                moveresize_event,
-                event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask,
-            )
-
-            # Fallback ConfigureRequest para gestores que no implementen EWMH.
-            window.configure(
-                x=adj_x,
-                y=adj_y,
-                width=adj_w,
-                height=adj_h
-            )
+            if self._supports_moveresize:
+                moveresize_event = xevent.ClientMessage(
+                    window=window,
+                    client_type=self._atoms["_NET_MOVERESIZE_WINDOW"],
+                    data=(32, [
+                        flags,
+                        self._to_card32(requested_rect.x),
+                        self._to_card32(requested_rect.y),
+                        self._to_card32(requested_rect.w),
+                        self._to_card32(requested_rect.h),
+                    ]),
+                )
+                self._root.send_event(
+                    moveresize_event,
+                    event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask,
+                )
+            else:
+                # Sólo para gestores que no anuncian _NET_MOVERESIZE_WINDOW.
+                window.configure(
+                    x=requested_rect.x,
+                    y=requested_rect.y,
+                    width=requested_rect.w,
+                    height=requested_rect.h,
+                )
             self._display.flush()
             logger.debug(
-                "move_resize_window: 0x%x → Visual:Rect(%d,%d,%d,%d) (X11 real: x=%d, y=%d, w=%d, h=%d, extents=%s)",
-                wid, rect.x, rect.y, rect.w, rect.h,
-                adj_x, adj_y, adj_w, adj_h, (left, right, top, bottom)
+                "move_resize_window: 0x%x → visible=%s, X11=%s, extents=%s",
+                wid, rect, requested_rect, extents,
             )
         except (BadWindow, BadDrawable):
             logger.warning("move_resize_window falló: ventana 0x%x desapareció", wid)
@@ -533,6 +615,32 @@ class X11Backend(WindowManager):
     def _to_card32(value: int) -> int:
         """Codifica enteros con signo como CARD32 para ClientMessage X11."""
         return int(value) & 0xFFFFFFFF
+
+    @staticmethod
+    def _compensate_csd_rect(
+        rect: Rect, extents: tuple[int, int, int, int]
+    ) -> Rect:
+        """Convierte un rectángulo visible en el búfer X11 con sombras CSD."""
+        left, right, top, bottom = (max(0, int(v)) for v in extents)
+        return Rect(
+            rect.x - left,
+            rect.y - top,
+            rect.w + left + right,
+            rect.h + top + bottom,
+        )
+
+    @staticmethod
+    def _visible_rect_from_buffer(
+        rect: Rect, extents: tuple[int, int, int, int]
+    ) -> Rect:
+        """Elimina del búfer X11 los márgenes transparentes declarados."""
+        left, right, top, bottom = (max(0, int(v)) for v in extents)
+        return Rect(
+            rect.x + left,
+            rect.y + top,
+            max(0, rect.w - left - right),
+            max(0, rect.h - top - bottom),
+        )
 
     def watch_snapped_window(self, wid: int) -> None:
         """Solicita los eventos de puntero necesarios para detectar un drag.
@@ -728,6 +836,17 @@ class X11Backend(WindowManager):
             logger.error("Error leyendo _NET_WM_STATE de 0x%x: %s", wid, e)
         return []
 
+    def _root_supports_atom(self, atom: int) -> bool:
+        """Consulta _NET_SUPPORTED del gestor de ventanas."""
+        try:
+            prop = self._root.get_full_property(
+                self._atoms["_NET_SUPPORTED"], Xatom.ATOM
+            )
+            return bool(prop and prop.value is not None and atom in prop.value)
+        except Exception as e:
+            logger.debug("No se pudo leer _NET_SUPPORTED: %s", e)
+            return False
+
     def _map_window_type(self, type_atom: int) -> WindowType:
         """Mapea un átomo de _NET_WM_WINDOW_TYPE a nuestro enum WindowType."""
         type_map = {
@@ -774,6 +893,8 @@ class X11Backend(WindowManager):
     def close(self) -> None:
         """Cierra la conexión al servidor X11."""
         try:
+            for wid in list(self._saved_normal_hints):
+                self.release_window_from_snap(wid)
             self._display.close()
             logger.info("Conexión X11 cerrada.")
         except Exception as e:

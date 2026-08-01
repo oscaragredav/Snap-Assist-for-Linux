@@ -283,6 +283,9 @@ class SnapFlow:
             return
 
         logger.info("Desacoplando 0x%x por arrastre y restaurando geometría", wid)
+        release = getattr(self._wm, "release_window_from_snap", None)
+        if release:
+            release(wid)
         self._wm.set_window_maximized(wid, previous_geometry.is_maximized)
         self._wm.move_resize_window(wid, previous_geometry.rect)
         self._state.restore_geometry(wid)
@@ -296,6 +299,9 @@ class SnapFlow:
         if not self._state.is_snapped(wid):
             return
         logger.info("Desacoplando 0x%x por resize externo", wid)
+        release = getattr(self._wm, "release_window_from_snap", None)
+        if release:
+            release(wid)
         self._state.restore_geometry(wid)
         if self._group_manager:
             self._group_manager.on_window_detached(wid)
@@ -303,6 +309,9 @@ class SnapFlow:
             self._state.unmark_snapped(wid)
 
     def on_window_destroyed(self, wid: int) -> None:
+        release = getattr(self._wm, "release_window_from_snap", None)
+        if release:
+            release(wid)
         if self._group_manager:
             self._group_manager.on_window_destroyed(wid)
         else:

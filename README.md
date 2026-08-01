@@ -52,8 +52,15 @@ venv/bin/python -m snapassist.main
 Los registros detallados se escriben en
 `~/.local/share/snapassist/daemon.log`. Los errores también se separan en
 `~/.local/share/snapassist/errors.log`, incluyendo el traceback. La terminal
-sólo muestra advertencias y errores, suprimiendo repeticiones durante las
-animaciones.
+muestra los eventos operativos de nivel `INFO`, las advertencias y los errores,
+suprimiendo repeticiones durante las animaciones. El detalle `DEBUG` queda sólo
+en los archivos para evitar saturar la consola.
+
+En X11, SnapAssist calcula las zonas sobre el rectángulo visible: descuenta y
+compensa automáticamente sombras CSD declaradas por GTK, Electron y otros
+toolkits. Mientras una ventana está acoplada también suspende sus incrementos de
+tamaño (por ejemplo, la cuadrícula de caracteres de una Terminal) y restaura las
+restricciones originales al desacoplarla o al cerrar el daemon.
 
 ## Pruebas
 

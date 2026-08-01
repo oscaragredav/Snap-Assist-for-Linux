@@ -89,10 +89,10 @@ def setup_logging() -> None:
             self._last_seen[key] = now
             return now - previous >= self.interval_seconds
 
-    # La terminal muestra sólo advertencias y errores no repetidos. El detalle
-    # completo continúa en daemon.log y los errores se duplican en errors.log.
+    # La terminal muestra la actividad operativa sin repetir mensajes idénticos.
+    # El detalle DEBUG continúa en daemon.log y los errores en errors.log.
     console_handler = logging.StreamHandler(sys.stderr)
-    console_handler.setLevel(logging.WARNING)
+    console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(formatter)
     console_handler.addFilter(DuplicateConsoleFilter())
 

@@ -93,6 +93,9 @@ class SnapEngine:
                 adjusted_rect.h,
             )
 
+        prepare = getattr(self._wm, "prepare_window_for_snap", None)
+        if prepare:
+            prepare(wid)
         self._wm.set_window_maximized(wid, False)
         logger.info(
             "Acoplando ventana 0x%x a zona %d de layout '%s'",
