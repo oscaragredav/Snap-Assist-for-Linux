@@ -35,14 +35,18 @@ class Daemon:
         hotkey_manager: HotkeyManager,
         ui_callback_queue = None,
         pointer_event_queue = None,
-        snap_flow = None
+        control_callback_queue = None,
+        snap_flow = None,
+        group_manager = None,
     ) -> None:
         self._wm = wm_backend
         self._state = state
         self._hotkeys = hotkey_manager
         self._ui_callback_queue = ui_callback_queue
         self._pointer_event_queue = pointer_event_queue
+        self._control_callback_queue = control_callback_queue
         self._snap_flow = snap_flow
+        self._group_manager = group_manager
         
         self._running = False
         self._display = wm_backend.get_display()
@@ -52,6 +56,8 @@ class Daemon:
         self._drag_starts = {}
         self._drag_distances = {}
         self._gesture_modes = {}
+        monitor_loader = getattr(self._wm, "get_monitors", None)
+        self._monitors = list(monitor_loader() if monitor_loader else [])
 
         logger.info("Daemon inicializado.")
 
@@ -70,15 +76,18 @@ class Daemon:
 
         while self._running:
             try:
-                # Usamos select con un timeout corto (0.5s) para no bloquear
+                # Usamos select con un timeout corto (50 ms) para no bloquear
                 # indefinidamente y permitir que el flag _running se evalúe.
-                readable, _, _ = select.select([self._display.fileno()], [], [], 0.5)
+                readable, _, _ = select.select([self._display.fileno()], [], [], 0.05)
+
+                if not self._running:
+                    break
                 
                 if readable:
                     # pending_events() retorna el número de eventos encolados
                     while self._display.pending_events():
                         event = self._display.next_event()
-                        self._dispatch_event(event)
+                        self._safe_dispatch_event(event)
 
                 # Comprobar cola de callbacks de UI de forma no bloqueante
                 if self._ui_callback_queue:
@@ -98,6 +107,17 @@ class Daemon:
                     except queue.Empty:
                         pass
 
+                if self._control_callback_queue:
+                    import queue
+                    try:
+                        # Un límite evita que una tecla defectuosa monopolice
+                        # el event loop; el resto se procesa en la siguiente vuelta.
+                        for _ in range(100):
+                            callback = self._control_callback_queue.get_nowait()
+                            callback()
+                    except queue.Empty:
+                        pass
+
             except KeyboardInterrupt:
                 logger.info("Event loop interrumpido por KeyboardInterrupt.")
                 break
@@ -108,24 +128,31 @@ class Daemon:
                     "Error no capturado en event loop: %s", e, exc_info=True
                 )
 
+        try:
+            self._hotkeys.unregister_all()
+        except Exception as e:
+            logger.error("Error deteniendo listeners: %s", e, exc_info=True)
         logger.info("Event loop finalizado.")
 
     def shutdown(self) -> None:
         """
-        Detiene el event loop y libera recursos.
-
-        Desregistra todos los atajos globales (XUngrabKey) y señaliza
-        al event loop que debe terminar.
+        Solicita detener el event loop. La liberación de listeners y UI se
+        realiza después de salir del loop, fuera del handler de señales.
         Llamado por el handler de SIGTERM/SIGINT en main.py.
         """
+        if not self._running:
+            return
         logger.info("Apagando daemon...")
-        self._hotkeys.unregister_all()
         self._running = False
 
     def _dispatch_event(self, event) -> None:
         """
         Despacha un evento X11 al handler correspondiente.
         """
+        if self._is_randr_screen_change(event):
+            self._handle_screen_change()
+            return
+
         event_type = event.type
 
         if event_type == X.PropertyNotify:
@@ -187,6 +214,43 @@ class Daemon:
                 self._drag_starts.pop(wid, None)
                 self._drag_distances.pop(wid, None)
                 self._gesture_modes.pop(wid, None)
+
+    def _safe_dispatch_event(self, event) -> bool:
+        """Aísla cada evento: uno defectuoso no detiene los siguientes."""
+        try:
+            self._dispatch_event(event)
+            return True
+        except Exception as e:
+            logger.error("Error procesando evento X11: %s", e, exc_info=True)
+            return False
+
+    @staticmethod
+    def _is_randr_screen_change(event) -> bool:
+        return bool(
+            getattr(event, "_snapassist_randr_screen_change", False)
+            or event.__class__.__name__ in {
+                "ScreenChangeNotify", "RRScreenChangeNotify",
+                "CrtcChangeNotify", "RRCrtcChangeNotify",
+                "OutputChangeNotify", "RROutputChangeNotify",
+            }
+        )
+
+    def _handle_screen_change(self) -> None:
+        loader = getattr(self._wm, "get_monitors", None)
+        new_monitors = list(loader() if loader else [])
+        if not new_monitors:
+            logger.warning("XRandR notificó una topología vacía; se conserva la anterior")
+            return
+        old_monitors = self._monitors
+        self._monitors = new_monitors
+        if self._group_manager:
+            self._group_manager.on_monitors_changed(old_monitors, new_monitors)
+        if self._snap_flow:
+            self._snap_flow.on_monitors_changed()
+        logger.info(
+            "Topología XRandR actualizada: %d → %d monitor(es)",
+            len(old_monitors), len(new_monitors),
+        )
 
     # ------------------------------------------------------------------
     # Handlers específicos
@@ -353,13 +417,19 @@ class Daemon:
         if event == "layout_selected":
             layout_index = msg.get("layout_index")
             zone_index = msg.get("zone_index")
-            self._snap_flow.confirm_selection(layout_index, zone_index)
+            self._snap_flow.confirm_selection(
+                layout_index, zone_index, msg.get("flow_id")
+            )
             
         elif event == "layout_cancelled":
-            self._snap_flow.cancel()
+            self._snap_flow.cancel(msg.get("flow_id"))
 
         elif event == "snap_assist_selected":
-            self._snap_flow.confirm_assist_selection(msg.get("window_id"))
+            self._snap_flow.confirm_assist_selection(
+                msg.get("window_id"), msg.get("flow_id")
+            )
 
         elif event == "snap_assist_cancelled":
-            self._snap_flow.cancel_snap_assist(msg.get("reason", "escape"))
+            self._snap_flow.cancel_snap_assist(
+                msg.get("reason", "escape"), msg.get("flow_id")
+            )

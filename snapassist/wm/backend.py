@@ -94,10 +94,11 @@ class WindowManager(ABC):
         ...
 
     @abstractmethod
-    def move_resize_window(self, wid: int, rect: Rect) -> None:
+    def move_resize_window(self, wid: int, rect: Rect) -> bool:
         """
         Mueve y redimensiona la ventana a la geometría especificada.
         Usa _NET_MOVERESIZE_WINDOW con fallback a XMoveResizeWindow.
+        Retorna ``False`` si la ventana desapareció o la operación falló.
         """
         ...
 
@@ -137,6 +138,18 @@ class WindowManager(ABC):
         o None si la ventana no es transitoria.
         """
         ...
+
+    def get_transient_children(self, wid: int) -> List[int]:
+        """Retorna ventanas transitorias cuyo padre es ``wid``."""
+        return [
+            candidate
+            for candidate in self.get_all_windows()
+            if candidate != wid and self.get_transient_for(candidate) == wid
+        ]
+
+    def get_monitors(self) -> List[Rect]:
+        """Retorna la geometría actual de los monitores conocidos."""
+        return []
 
     @abstractmethod
     def get_display(self) -> object:

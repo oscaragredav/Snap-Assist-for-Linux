@@ -256,10 +256,12 @@ def main() -> None:
     group_manager = GroupManager(state, wm_backend)
 
     pointer_event_queue = queue.Queue()
+    control_callback_queue = queue.Queue()
     hotkey_manager = HotkeyManager(
         display_obj=wm_backend.get_display(),
         root_window=wm_backend.root,
         pointer_event_queue=pointer_event_queue,
+        callback_queue=control_callback_queue,
     )
     
     # 5. Inicializar UI en hilo separado
@@ -277,7 +279,7 @@ def main() -> None:
     )
 
     def on_super_z():
-        # Este callback es llamado por HotkeyManager en el hilo principal
+        # HotkeyManager lo encola; el daemon lo ejecuta en el hilo de X11.
         snap_flow.trigger()
 
     if not hotkey_manager.register(HOTKEY_LAYOUT_MENU, on_super_z):
@@ -332,14 +334,15 @@ def main() -> None:
         hotkey_manager=hotkey_manager,
         ui_callback_queue=ui_callback_queue,
         pointer_event_queue=pointer_event_queue,
-        snap_flow=snap_flow
+        control_callback_queue=control_callback_queue,
+        snap_flow=snap_flow,
+        group_manager=group_manager,
     )
 
     # 8. Registrar handlers de señales para apagado limpio
     def signal_handler(signum, frame):
         sig_name = signal.Signals(signum).name
         logger.info("Señal %s recibida. Iniciando apagado limpio...", sig_name)
-        ui_manager.stop()
         daemon.shutdown()
 
     signal.signal(signal.SIGTERM, signal_handler)
@@ -358,7 +361,9 @@ def main() -> None:
     except Exception as e:
         logger.critical("Error fatal en el event loop: %s", e, exc_info=True)
     finally:
-        # 10. Limpieza: cerrar conexión X11
+        # 10. Limpieza ordenada fuera del handler de señales.
+        ui_manager.stop()
+        hotkey_manager.unregister_all()
         logger.info("Cerrando conexión X11...")
         wm_backend.close()
         logger.info("SnapAssist daemon finalizado.")

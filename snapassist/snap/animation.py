@@ -3,7 +3,6 @@ snap/animation.py — Motor de animaciones para acoplamiento de ventanas.
 """
 
 import time
-import threading
 import logging
 from typing import Callable, Optional
 from snapassist.layout.engine import Rect
@@ -51,19 +50,22 @@ class AnimationEngine:
         start_rect: Rect, 
         end_rect: Rect, 
         update_callback: Callable[[Rect], None],
-        on_complete: Optional[Callable[[], None]] = None
+        on_complete: Optional[Callable[[], None]] = None,
+        on_error: Optional[Callable[[Exception], None]] = None,
     ) -> None:
         """
-        Ejecuta la animación en un hilo separado para no bloquear el event loop de X11.
+        Ejecuta la animación en el hilo coordinador. La pausa máxima es breve
+        y garantiza que toda operación X11 use una única conexión/hilo.
         """
         def _run():
             try:
                 self.animate(start_rect, end_rect, update_callback)
             except Exception as e:
                 logger.error("Error durante animación: %s", e)
-            finally:
+                if on_error:
+                    on_error(e)
+            else:
                 if on_complete:
                     on_complete()
                     
-        t = threading.Thread(target=_run, daemon=True, name="AnimationThread")
-        t.start()
+        _run()

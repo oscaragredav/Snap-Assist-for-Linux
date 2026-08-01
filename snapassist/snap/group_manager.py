@@ -4,7 +4,7 @@ import logging
 from typing import Dict, List, Optional
 from uuid import uuid4
 
-from snapassist.config import LayoutTemplate, SnapGroup, ZoneRef
+from snapassist.config import LayoutTemplate, Rect, SnapGroup, ZoneRef
 from snapassist.core.state import State
 from snapassist.wm.backend import WindowManager
 
@@ -134,6 +134,56 @@ class GroupManager:
                 self._state.restore_geometry(wid)
                 self._release_snap_constraints(wid)
         logger.info("Snap Group disuelto: %s", group_id)
+
+    def on_monitors_changed(
+        self, old_monitors: List[Rect], new_monitors: List[Rect]
+    ) -> None:
+        """Suspende grupos de monitores retirados y descarta reconexiones.
+
+        Se compara la geometría anterior, no sólo la cantidad: al desconectar
+        el monitor primario Xinerama puede renumerar el secundario como índice
+        cero. Los grupos suspendidos no se reactivan al reconectar.
+        """
+        old_count = len(old_monitors)
+        new_count = len(new_monitors)
+
+        removed_indices = {
+            index for index, monitor in enumerate(old_monitors)
+            if monitor not in new_monitors
+        }
+        if removed_indices:
+            for group_id, group in list(self._state.active_groups.items()):
+                old_index = group.monitor_index
+                if old_index not in removed_indices:
+                    if 0 <= old_index < old_count:
+                        old_rect = old_monitors[old_index]
+                        if old_rect in new_monitors:
+                            group.monitor_index = new_monitors.index(old_rect)
+                    continue
+                self._state.active_groups.pop(group_id, None)
+                self._state.suspended_groups.setdefault(
+                    group.monitor_index, []
+                ).append(group)
+                for wid in group.zones.values():
+                    self._state.unmark_snapped(wid)
+                    self._state.restore_geometry(wid)
+                    self._release_snap_constraints(wid)
+                logger.info(
+                    "Snap Group suspendido por desconexión del monitor %d: %s",
+                    old_index,
+                    group_id,
+                )
+
+        added_monitor = any(monitor not in old_monitors for monitor in new_monitors)
+        if added_monitor and self._state.suspended_groups:
+            discarded = sum(
+                len(groups) for groups in self._state.suspended_groups.values()
+            )
+            self._state.suspended_groups.clear()
+            logger.info(
+                "%d Snap Group(s) suspendido(s) descartados tras reconexión",
+                discarded,
+            )
 
     def _release_snap_constraints(self, wid: int) -> None:
         release = getattr(self._wm, "release_window_from_snap", None)

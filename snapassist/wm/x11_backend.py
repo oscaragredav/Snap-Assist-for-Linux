@@ -92,6 +92,19 @@ class X11Backend(WindowManager):
                 | X.PropertyChangeMask
             )
         )
+        self._randr_enabled = False
+        try:
+            from Xlib.ext import randr
+            if self._display.has_extension("RANDR"):
+                self._root.xrandr_select_input(
+                    randr.RRScreenChangeNotifyMask
+                    | randr.RRCrtcChangeNotifyMask
+                    | randr.RROutputChangeNotifyMask
+                )
+                self._randr_enabled = True
+                logger.info("Monitorización XRandR activada")
+        except Exception as e:
+            logger.warning("No se pudo activar la monitorización XRandR: %s", e)
         self._display.flush()
 
         # Set de window_ids cuyos resizes fueron iniciados por el daemon.
@@ -149,6 +162,25 @@ class X11Backend(WindowManager):
         except Exception as e:
             logger.error("Error leyendo _NET_CLIENT_LIST: %s", e)
         return []
+
+    def get_transient_children(self, wid: int) -> List[int]:
+        """Retorna diálogos cuyo WM_TRANSIENT_FOR apunta a ``wid``.
+
+        Se consulta la lista cruda porque los diálogos no son elegibles para
+        Snap Assist y, por tanto, no aparecen en ``get_all_windows``.
+        """
+        children: List[int] = []
+        try:
+            prop = self._root.get_full_property(
+                self._atoms["_NET_CLIENT_LIST"], X.AnyPropertyType
+            )
+            for child in (prop.value if prop and prop.value is not None else []):
+                child_wid = int(child)
+                if child_wid != wid and self.get_transient_for(child_wid) == wid:
+                    children.append(child_wid)
+        except Exception as e:
+            logger.warning("No se pudieron enumerar modales de 0x%x: %s", wid, e)
+        return children
 
     def get_eligible_windows(self) -> List[WindowInfo]:
         """Retorna las ventanas elegibles con título y estado de workspace."""
@@ -393,6 +425,10 @@ class X11Backend(WindowManager):
         screen = self._display.screen()
         return Rect(x=0, y=0, w=screen.width_in_pixels, h=screen.height_in_pixels)
 
+    def get_monitors(self) -> List[Rect]:
+        """Expone una copia de la topología actual para el coordinador."""
+        return list(self._get_monitors())
+
     def get_monitor_for_window(self, wid: int) -> int:
         """
         Retorna el índice del monitor donde reside la ventana.
@@ -537,7 +573,7 @@ class X11Backend(WindowManager):
             pass
         return (0, 0, 0, 0)
 
-    def move_resize_window(self, wid: int, rect: Rect) -> None:
+    def move_resize_window(self, wid: int, rect: Rect) -> bool:
         """
         Mueve y redimensiona una ventana en X11.
 
@@ -548,6 +584,9 @@ class X11Backend(WindowManager):
         """
         try:
             window = self._display.create_resource_object('window', wid)
+            # Fuerza una petición síncrona antes de encolar ClientMessage. Así
+            # una ventana destruida se reporta como fallo de la transacción.
+            window.get_attributes()
             self._pending_own_resizes.add(wid)
 
             extents = self._get_frame_extents(window)
@@ -599,9 +638,11 @@ class X11Backend(WindowManager):
                 "move_resize_window: 0x%x → visible=%s, X11=%s, extents=%s",
                 wid, rect, requested_rect, extents,
             )
+            return True
         except (BadWindow, BadDrawable):
             logger.warning("move_resize_window falló: ventana 0x%x desapareció", wid)
             self._pending_own_resizes.discard(wid)
+            return False
         except Exception as e:
             logger.error(
                 "Error al mover/redimensionar 0x%x: %s",
@@ -610,6 +651,7 @@ class X11Backend(WindowManager):
                 exc_info=True,
             )
             self._pending_own_resizes.discard(wid)
+            return False
 
     @staticmethod
     def _to_card32(value: int) -> int:

@@ -196,7 +196,7 @@ Implementar el menú visual de selección de layouts invocado por Super+Z, inclu
 - Diseñar el tema Rofi `snap_assist.rasi` que represente cada layout como un diagrama de zonas usando caracteres Unicode de bloque.
 - Implementar la lógica de navegación en `LayoutMenu`: al cambiar selección en Rofi, mostrar el overlay de la zona correspondiente en la pantalla real. Esto requiere comunicación entre el proceso Rofi y el daemon; implementar mediante un socket Unix o un archivo temporal de estado que Rofi actualiza vía `-kb-custom-*` y el daemon lee.
 - Implementar en `snap_flow.py` el flujo hasta el primer acoplamiento: validar ventana activa → obtener monitor y work area → calcular zonas → deshabilitar layouts insuficientes → abrir menú → guardar geometría en State → ejecutar `move_resize_window` → ejecutar animación de confirmación.
-- Implementar la animación de confirmación: serie de `move_resize_window` interpolados linealmente entre la geometría actual y la geometría destino en `SNAP_ANIMATION_MS` milisegundos, ejecutados en hilo separado.
+- Implementar la animación de confirmación: serie de `move_resize_window` interpolados linealmente entre la geometría actual y la geometría destino en `SNAP_ANIMATION_MS` milisegundos. Las operaciones X11 se ejecutan en el hilo coordinador para no compartir la conexión entre hilos.
 - Registrar el doble-press de Super+Z como cancelación (máquina de estados en `SnapFlow`).
 
 ### Criterios técnicos de aceptación
@@ -423,6 +423,8 @@ Crear un layout con Firefox y Terminal. Cerrar Firefox.
 
 ## Fase 9 — Casos Borde y Robustez
 
+**Estado:** ✅ Implementada y verificada con pruebas automatizadas.
+
 ### Objetivo
 Verificar y endurecer el sistema ante los casos borde definidos en el documento de requerimientos: desconexión de monitores, ventanas modales, segunda invocación de Super+Z, cambio de tamaño autónomo de aplicaciones, y el principio de atomicidad bajo condiciones de fallo.
 
@@ -431,20 +433,31 @@ Verificar y endurecer el sistema ante los casos borde definidos en el documento 
 - `wm/x11_backend.py`
 - `snap/snap_flow.py`
 - `snap/group_manager.py`
+- `snap/snapper.py`
+- `snap/animation.py`
+- `core/state.py`
+- `tests/test_phase9.py`
 
 ### Tareas
 - Implementar detección de desconexión de monitor: suscribirse a eventos `RRScreenChangeNotify` (XRandR); al detectar pérdida de monitor, suspender los grupos asociados en `State.suspended_groups` y descartarlos al reconectar.
 - Implementar manejo de ventanas modales en `snap_flow.py`: antes de `move_resize_window`, verificar `get_transient_for(wid)`; si existe una ventana modal activa, mover el padre y centrar la modal sobre él.
-- Implementar manejo de error `BadWindow` en `X11Backend.move_resize_window`: capturar la excepción X11, loguear el error, limpiar referencias en `State` y `GroupManager`, retornar `False` al caller.
+- Implementar manejo de error `BadWindow` en `X11Backend.move_resize_window`: capturar la excepción X11, loguear el error y retornar `False` al coordinador. La limpieza de `State` y `GroupManager` pertenece a `SnapFlow`, manteniendo separado el backend del estado de negocio.
 - Implementar el test de atomicidad: si `move_resize_window` falla en mitad de un flujo multi-ventana, revertir todas las ventanas ya movidas a sus geometrías previas guardadas en `State`.
 - Revisar todos los handlers de eventos para verificar que ninguno puede dejar `State` en estado inconsistente si lanza una excepción no capturada. Agregar bloques try/except en el event loop con logging de `ERROR` y continuación del loop.
 - Escribir tests unitarios para: revert atómico tras fallo en tercera ventana de un layout de tres, manejo de `BadWindow` sin crash del daemon, handler de `RRScreenChangeNotify`.
+- Serializar callbacks de `pynput` mediante una cola consumida por el daemon; ningún listener modifica directamente `SnapFlow`, `State` ni X11.
+- Etiquetar comandos y callbacks de UI con `flow_id`; ignorar eventos atrasados de `Esc`, `FocusOut`, selección o un menú anterior.
+- Invalidar callbacks `after_idle` de Tkinter mediante una generación por visualización y hacer que un solo `Esc` cancele desde cualquier etapa.
+- Ordenar el apagado: el handler de señales sólo solicita detener el daemon; luego se detienen listeners, se procesa `quit` en Tkinter, se espera el hilo UI y se cierra X11.
+- Añadir pruebas de regresión para cancelación obsoleta, serialización de hotkeys, animación en el hilo coordinador y procesamiento efectivo de `quit`.
 
 ### Criterios técnicos de aceptación
 - Desconectar un monitor externo durante una sesión activa no crashea el daemon. El log registra la suspensión de grupos.
 - Una ventana modal sobre una ventana acoplada se mueve centrada sobre su padre al aplicar el layout.
 - Un fallo de `BadWindow` en mitad de un Snap Assist de 3 ventanas revierte las dos ventanas ya movidas a sus geometrías previas.
 - El daemon continúa funcionando después de cualquier error no crítico.
+- Cancelar con `Esc` o cambiar de ventana y abrir inmediatamente otro flujo no cancela el flujo nuevo ni bloquea `Super+Z`.
+- `SIGINT`/`SIGTERM` con cualquier menú abierto termina listeners, UI, event loop y conexión X11 sin requerir señales repetidas.
 - Todos los tests unitarios pasan.
 
 ### Pruebas funcionales

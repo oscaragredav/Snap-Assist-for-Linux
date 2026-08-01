@@ -7,6 +7,7 @@ Todo se inicializa vacío al arrancar el daemon.
 """
 
 import logging
+from copy import deepcopy
 from typing import Dict, List, Optional
 
 from snapassist.config import QUICKKEY_SEQUENCE, SnapGroup, WindowGeometry, WindowInfo, ZoneRef
@@ -152,6 +153,27 @@ class State:
                 "Ventana 0x%x desacoplada: grupo=%s, zona=%d",
                 wid, ref.group_id, ref.zone_index,
             )
+
+    # ------------------------------------------------------------------
+    # Snapshots transaccionales
+    # ------------------------------------------------------------------
+
+    def snapshot_snap_state(self) -> dict:
+        """Captura el estado mutable afectado por una operación de snap."""
+        return deepcopy({
+            "saved_geometries": self.saved_geometries,
+            "snapped_windows": self.snapped_windows,
+            "active_groups": self.active_groups,
+            "suspended_groups": self.suspended_groups,
+        })
+
+    def restore_snap_state(self, snapshot: dict) -> None:
+        """Restaura atómicamente un snapshot creado por ``snapshot_snap_state``."""
+        self.saved_geometries = deepcopy(snapshot["saved_geometries"])
+        self.snapped_windows = deepcopy(snapshot["snapped_windows"])
+        self.active_groups = deepcopy(snapshot["active_groups"])
+        self.suspended_groups = deepcopy(snapshot["suspended_groups"])
+        logger.info("Estado de SnapAssist restaurado desde snapshot transaccional")
 
     # ------------------------------------------------------------------
     # Resumen de estado (para logging y debug)

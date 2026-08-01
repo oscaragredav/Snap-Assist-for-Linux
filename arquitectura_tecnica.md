@@ -144,7 +144,7 @@ def get_window_type(self, wid: int) -> WindowType: ...
 def get_window_state(self, wid: int) -> WindowState: ...
 def get_work_area(self, monitor_index: int) -> Rect: ...
 def get_monitor_for_window(self, wid: int) -> int: ...
-def move_resize_window(self, wid: int, rect: Rect) -> None: ...
+def move_resize_window(self, wid: int, rect: Rect) -> bool: ...
 def focus_window(self, wid: int) -> None: ...
 def get_transient_for(self, wid: int) -> Optional[int]: ...
 def subscribe_events(self, handler: Callable[[XEvent], None]) -> None: ...
@@ -397,7 +397,12 @@ Ningún campo de `State` se serializa a disco. Todo se inicializa vacío al arra
 
 ## 5. Eventos que Intercambian los Módulos
 
-El sistema no usa un bus de mensajes interno formal. La comunicación entre módulos es por **llamadas directas** (el daemon llama a métodos del GroupManager, el SnapFlow llama al LayoutEngine, etc.). Lo que sí existe es un flujo de eventos X11 que el daemon recibe y despacha.
+El sistema usa llamadas directas entre módulos dentro del hilo coordinador y
+colas thread-safe en las fronteras con `pynput` y Tkinter. Los listeners nunca
+invocan lógica de negocio ni usan la conexión X11: encolan una acción que el
+daemon consume y ejecuta en orden. Cada comando/callback visual lleva un
+`flow_id`; los eventos cuyo identificador no coincide con el flujo activo se
+descartan como obsoletos.
 
 ### 5.1 Eventos X11 consumidos por el daemon
 
@@ -408,7 +413,7 @@ El sistema no usa un bus de mensajes interno formal. La comunicación entre mód
 | `ConfigureNotify` | La ventana está acoplada y existe un gesto de resize de usuario confirmado sobre su borde | `GroupManager.on_window_resized(wid)` |
 | `MapNotify` | Siempre | Actualizar caché interno de ventanas visibles |
 | `UnmapNotify` | Siempre | Actualizar caché interno de ventanas visibles |
-| `KeyPress` | El keycode coincide con un atajo registrado | Callback del `HotkeyManager` correspondiente |
+| Atajo de `pynput` | Coincide con un binding registrado | Encolar callback; el daemon lo ejecuta en su hilo junto con los eventos X11 |
 
 ### 5.2 Distinción entre resize propio y resize externo
 
@@ -418,7 +423,9 @@ Para que `ConfigureNotify` no dispare un desacoplamiento cuando es el propio dae
 
 ```
 HotkeyManager.on_keypress(Super+Z)
-  → SnapFlow.invoke()
+  → control_callback_queue.put(callback)
+  → Daemon ejecuta callback en el hilo X11
+  → SnapFlow.trigger()
     → WMBackend.get_active_window()          # ¿hay ventana activa?
     → WMBackend.get_monitor_for_window(wid)  # ¿en qué monitor?
     → WMBackend.get_work_area(monitor)       # dimensiones del work area
@@ -454,8 +461,8 @@ Todo error en una operación de acoplamiento debe preservar el estado previo com
 
 | Tipo de error | Ejemplo concreto | Respuesta |
 |---|---|---|
-| Ventana desaparecida entre consulta y operación | `move_resize_window` lanza `BadWindow` | Capturar excepción X11, abortar la operación de esa ventana, limpiar referencias en State y GroupManager, continuar el flujo si hay más zonas pendientes |
-| Rofi terminado por el usuario (Esc) | Código de salida 1 de Rofi | Tratar como cancelación limpia, aplicar política de preservación de ventanas ya acopladas |
+| Ventana desaparecida entre consulta y operación | `move_resize_window` encuentra `BadWindow` | El backend retorna `False`; SnapFlow revierte físicamente todas las ventanas de la transacción y restaura un snapshot de State. El backend nunca modifica State ni GroupManager |
+| `Esc`/`FocusOut` atrasado | El `flow_id` no coincide con el flujo activo | Ignorar el callback; nunca cancelar ni seleccionar sobre un menú posterior |
 | Rofi no encontrado en el sistema | `FileNotFoundError` al hacer `subprocess.run` | Loguear error crítico, emitir notificación al usuario via `notifier.py`, abortar flujo completo sin modificar ninguna ventana |
 | Backend WM no disponible | `Display()` lanza `error.DisplayConnectionError` | Terminar el daemon con mensaje de error claro en stderr. Sin servidor X no hay nada que hacer |
 | ConfigureNotify en ventana ya destruida | Race condition entre DestroyNotify y ConfigureNotify | Verificar existencia del wid en `State.snapped_windows` antes de procesar; si no existe, ignorar silenciosamente |

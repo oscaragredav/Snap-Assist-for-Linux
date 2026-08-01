@@ -7,10 +7,10 @@ sesión X11; Wayland aún no está soportado.
 
 ## Estado del proyecto
 
-Las fases 1 a 8 del plan están implementadas. Las fases recientes cuentan con
+Las fases 1 a 9 del plan están implementadas. Las fases recientes cuentan con
 pruebas unitarias; su validación funcional requiere una sesión X11 real.
 
-La siguiente fase del plan será la 9: casos borde y robustez.
+La siguiente fase del plan será la 10: configurabilidad y empaquetado.
 
 ## Funcionalidad disponible
 
@@ -28,6 +28,15 @@ La siguiente fase del plan será la 9: casos borde y robustez.
   mediante `Super+Alt+Tab`; `Super+/` muestra ayuda y estado.
 - Aplicaciones con tamaño mínimo grande, como Spotify, permanecen en el grupo:
   se centran en su zona y desbordan simétricamente cuando es necesario.
+- Operaciones multi-ventana atómicas: un fallo restaura la geometría y el
+  estado previos de todas las ventanas ya movidas.
+- Seguimiento XRandR de desconexiones, suspensión de grupos del monitor
+  retirado y descarte seguro al reconectar.
+- Ventanas modales centradas sobre su padre al acoplarlo y aislamiento de
+  errores X11 para que un evento no crítico no detenga el daemon.
+- Cancelaciones y atajos serializados por el daemon: callbacks atrasados de
+  `Esc`/`FocusOut` se descartan por identificador de flujo y no pueden cerrar
+  una invocación posterior de `Super+Z`. El apagado espera el cierre de Tkinter.
 
 El menú de layouts se controla en dos pasos: primero se escoge el grupo con
 `←`/`→` y Enter, o directamente con `1`–`6`; después se escoge la posición con
@@ -72,6 +81,7 @@ venv/bin/python tests/test_phase5.py
 venv/bin/python tests/test_phase6.py
 venv/bin/python tests/test_phase7.py
 venv/bin/python tests/test_phase8.py
+venv/bin/python tests/test_phase9.py
 ```
 
 Los criterios funcionales y el orden completo de implementación se encuentran

@@ -45,6 +45,7 @@ class LayoutMenu:
         self._layout_widgets = []
         self._stage = "layout"
         self._visible = False
+        self._generation = 0
         
         # Bindings de teclado
         self._window.bind("<Left>", lambda _event: self._move(-1))
@@ -64,6 +65,7 @@ class LayoutMenu:
         absolute_rects: rectángulos absolutos calculados para las zonas de cada layout
         monitor_rect: Rect del monitor para centrar el menú
         """
+        self._generation += 1
         self._templates = templates
         self._absolute_rects = absolute_rects
         self._monitor_rect = monitor_rect
@@ -108,6 +110,7 @@ class LayoutMenu:
         # Marcarlo como oculto antes de liberar el foco evita que el FocusOut
         # generado por la propia confirmación se convierta en una cancelación.
         self._visible = False
+        self._generation += 1
         try:
             self._window.grab_release()
         except tk.TclError:
@@ -310,11 +313,7 @@ class LayoutMenu:
             self._confirm()
 
     def _back_or_cancel(self):
-        if self._stage == "zone":
-            self._stage = "layout"
-            self._update_hover()
-        else:
-            self._cancel()
+        self._cancel()
         
     def _cancel(self):
         if not self._visible:
@@ -324,10 +323,17 @@ class LayoutMenu:
 
     def _focus_lost(self, _event):
         """Cancela únicamente si la pérdida de foco fue externa."""
-        self._window.after_idle(self._cancel_if_still_unfocused)
+        generation = self._generation
+        self._window.after_idle(
+            lambda: self._cancel_if_still_unfocused(generation)
+        )
 
-    def _cancel_if_still_unfocused(self):
-        if self._visible and self._window.focus_displayof() is None:
+    def _cancel_if_still_unfocused(self, generation=None):
+        if (
+            (generation is None or generation == self._generation)
+            and self._visible
+            and self._window.focus_displayof() is None
+        ):
             self._cancel()
 
     @staticmethod

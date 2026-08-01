@@ -68,7 +68,7 @@ class WaylandBackend(WindowManager):
     def get_monitor_for_window(self, wid: int) -> int:
         raise NotImplementedError(_WAYLAND_MSG)
 
-    def move_resize_window(self, wid: int, rect: Rect) -> None:
+    def move_resize_window(self, wid: int, rect: Rect) -> bool:
         raise NotImplementedError(_WAYLAND_MSG)
 
     def focus_window(self, wid: int) -> None:

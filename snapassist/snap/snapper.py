@@ -55,7 +55,7 @@ class SnapEngine:
             work_area=work_area,
             zone=layout.zones[zone_index],
         )
-        self.snap_window_to_rect(wid, layout, zone_index, target_rect, group_id)
+        return self.snap_window_to_rect(wid, layout, zone_index, target_rect, group_id)
 
     def snap_window_to_rect(
         self,
@@ -64,13 +64,14 @@ class SnapEngine:
         zone_index: int,
         target_rect: Rect,
         group_id: str,
-    ) -> None:
+    ) -> bool:
         """Acopla una ventana a un rectángulo ya calculado.
 
         Esta variante permite que Snap Assist coloque ventanas procedentes de
         otro monitor en las zonas del monitor donde comenzó el flujo.
         """
-        if not self._state.get_saved_geometry(wid):
+        saved_here = not self._state.get_saved_geometry(wid)
+        if saved_here:
             current_geom = self._wm.get_window_geometry(wid)
             self._state.save_geometry(wid, current_geom)
             logger.debug(
@@ -101,9 +102,28 @@ class SnapEngine:
             "Acoplando ventana 0x%x a zona %d de layout '%s'",
             wid, zone_index, layout.name,
         )
-        self._wm.move_resize_window(wid, adjusted_rect)
+        if self._wm.move_resize_window(wid, adjusted_rect) is False:
+            if saved_here:
+                self._state.restore_geometry(wid)
+            release = getattr(self._wm, "release_window_from_snap", None)
+            if release:
+                release(wid)
+            return False
+
+        transient_loader = getattr(self._wm, "get_transient_children", None)
+        for child_wid in (transient_loader(wid) if transient_loader else []):
+            child_rect = self._wm.get_window_geometry(child_wid).rect
+            centered = Rect(
+                adjusted_rect.x + (adjusted_rect.w - child_rect.w) // 2,
+                adjusted_rect.y + (adjusted_rect.h - child_rect.h) // 2,
+                child_rect.w,
+                child_rect.h,
+            )
+            if self._wm.move_resize_window(child_wid, centered) is False:
+                return False
         self._wm.focus_window(wid)
         self._state.mark_snapped(
             wid,
             ZoneRef(group_id=group_id, zone_index=zone_index),
         )
+        return True

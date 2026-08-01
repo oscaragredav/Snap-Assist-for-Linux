@@ -27,6 +27,7 @@ class SnapAssistMenu:
         self._active_index = 0
         self._rows = []
         self._visible = False
+        self._generation = 0
 
         self._window.bind("<Up>", lambda _event: self._move(-1))
         self._window.bind("<Down>", lambda _event: self._move(1))
@@ -36,6 +37,7 @@ class SnapAssistMenu:
         self._window.bind("<FocusOut>", self._focus_lost)
 
     def show(self, eligible_windows: List[WindowInfo], zone_rect: Rect) -> None:
+        self._generation += 1
         self._windows = list(eligible_windows)
         self._active_index = 0
         self._draw()
@@ -59,6 +61,7 @@ class SnapAssistMenu:
         if not self._visible:
             return
         self._visible = False
+        self._generation += 1
         try:
             self._window.grab_release()
         except tk.TclError:
@@ -124,8 +127,15 @@ class SnapAssistMenu:
     def _focus_lost(self, _event) -> None:
         # after_idle evita interpretar como interrupción un cambio de foco
         # interno durante la creación/ocultación de la ventana.
-        self._window.after_idle(self._cancel_if_still_unfocused)
+        generation = self._generation
+        self._window.after_idle(
+            lambda: self._cancel_if_still_unfocused(generation)
+        )
 
-    def _cancel_if_still_unfocused(self) -> None:
-        if self._visible and self._window.focus_displayof() is None:
+    def _cancel_if_still_unfocused(self, generation=None) -> None:
+        if (
+            (generation is None or generation == self._generation)
+            and self._visible
+            and self._window.focus_displayof() is None
+        ):
             self._cancel("focus_out")

@@ -7,6 +7,7 @@ para escuchar el flujo de eventos globalmente sin requerir exclusividad.
 """
 
 import logging
+import queue
 from typing import Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -55,13 +56,20 @@ class HotkeyManager:
     Gestiona el registro y captura de atajos de teclado globales usando pynput.
     """
 
-    def __init__(self, display_obj=None, root_window=None, pointer_event_queue=None) -> None:
+    def __init__(
+        self,
+        display_obj=None,
+        root_window=None,
+        pointer_event_queue=None,
+        callback_queue: Optional[queue.Queue] = None,
+    ) -> None:
         # display_obj y root_window se mantienen por compatibilidad con main.py
         self._bindings: Dict[str, Callable] = {}
         self._original_names: Dict[str, str] = {}
         self._listener: Optional[object] = None
         self._pointer_listener: Optional[object] = None
         self._pointer_event_queue = pointer_event_queue
+        self._callback_queue = callback_queue
         self._pointer_pressed = False
 
         logger.info("HotkeyManager inicializado (usando pynput/XRecord).")
@@ -79,7 +87,10 @@ class HotkeyManager:
         # Envolver el callback para capturar excepciones
         def safe_callback():
             try:
-                callback()
+                if self._callback_queue is not None:
+                    self._callback_queue.put(callback)
+                else:
+                    callback()
             except Exception as e:
                 logger.error("Error en callback de hotkey '%s': %s", hotkey_str, e, exc_info=True)
 
@@ -119,12 +130,21 @@ class HotkeyManager:
         """
         Detiene el listener y limpia los atajos.
         """
+        if not self._listener and not self._pointer_listener and not self._bindings:
+            return
+
         if self._listener:
-            self._listener.stop()
+            try:
+                self._listener.stop()
+            except Exception as e:
+                logger.warning("No se pudo detener el listener de teclado: %s", e)
             self._listener = None
 
         if self._pointer_listener:
-            self._pointer_listener.stop()
+            try:
+                self._pointer_listener.stop()
+            except Exception as e:
+                logger.warning("No se pudo detener el listener de puntero: %s", e)
             self._pointer_listener = None
         self._pointer_pressed = False
             
