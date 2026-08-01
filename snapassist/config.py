@@ -60,8 +60,13 @@ class WindowGeometry:
 
 @dataclass
 class ZoneRef:
-    """Referencia de zona: identifica en qué grupo y en qué zona está acoplada una ventana."""
-    group_id: str       # UUID del grupo
+    """Referencia de zona de una ventana acoplada.
+
+    Una ventana puede estar acoplada de forma independiente cuando el usuario
+    cancela Snap Assist antes de completar un grupo. En ese caso ``group_id``
+    es ``None``; nunca se usa un UUID temporal que no exista en el estado.
+    """
+    group_id: Optional[str]
     zone_index: int     # índice de zona dentro del layout del grupo
 
 

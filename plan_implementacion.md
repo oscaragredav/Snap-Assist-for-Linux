@@ -88,7 +88,7 @@ Enviar SIGTERM al proceso del daemon con `kill -TERM <pid>`.
 ## Fase 2 — Captura de Atajos Globales y Lectura de Estado de Foco
 
 ### Objetivo
-Implementar la captura de atajos de teclado globales mediante `XGrabKey` y la detección de cambios de ventana activa. Al final de esta fase, presionar Super+Z mientras cualquier aplicación tiene el foco produce una entrada en el log con el título de la ventana activa y el índice del monitor donde reside.
+Implementar la captura de atajos de teclado globales mediante `pynput`/XRecord y la detección de cambios de ventana activa. Al final de esta fase, presionar Super+Z mientras cualquier aplicación tiene el foco produce una entrada en el log con el título de la ventana activa y el índice del monitor donde reside.
 
 ### Archivos creados o modificados en esta fase
 - `core/hotkeys.py` (nuevo)
@@ -96,7 +96,7 @@ Implementar la captura de atajos de teclado globales mediante `XGrabKey` y la de
 - `core/state.py` (lógica de `update_mru`)
 
 ### Tareas
-- Implementar `HotkeyManager.register(hotkey_str, callback)`: parsear la cadena de atajo (ej. `"super+z"`), resolver keysym y máscara de modificadores, llamar `XGrabKey` sobre el root window para todas las variantes de NumLock y CapsLock.
+- Implementar `HotkeyManager.register(hotkey_str, callback)`: parsear la cadena de atajo (ej. `"super+z"`) y registrarla en el listener global `pynput`/XRecord.
 - Implementar `HotkeyManager.unregister_all()` con `XUngrabKey` para todos los atajos registrados.
 - Implementar el event loop en `daemon.py`: llamada bloqueante a `display.next_event()`, despacho por tipo de evento a handlers específicos.
 - Implementar handler de `PropertyNotify` sobre `_NET_ACTIVE_WINDOW`: extraer el nuevo `window_id` activo, llamar `State.update_mru(wid)`.
@@ -192,9 +192,8 @@ Implementar el menú visual de selección de layouts invocado por Super+Z, inclu
 ### Tareas
 - Implementar `Notifier.send(message, timeout_ms)` como wrapper de `notify-send`.
 - Implementar `Overlay.show(rect, monitor)` y `Overlay.hide()`: ventana tkinter sin decoraciones, fondo semitransparente, posicionada con coordenadas absolutas, en hilo separado para no bloquear el event loop.
-- Implementar `LayoutMenu.show(templates, disabled_indices) -> Optional[Tuple[LayoutTemplate, int]]`: invocar Rofi con el tema custom, parsear la selección devuelta por stdout, manejar código de salida 1 (Esc) como `None`.
-- Diseñar el tema Rofi `snap_assist.rasi` que represente cada layout como un diagrama de zonas usando caracteres Unicode de bloque.
-- Implementar la lógica de navegación en `LayoutMenu`: al cambiar selección en Rofi, mostrar el overlay de la zona correspondiente en la pantalla real. Esto requiere comunicación entre el proceso Rofi y el daemon; implementar mediante un socket Unix o un archivo temporal de estado que Rofi actualiza vía `-kb-custom-*` y el daemon lee.
+- Implementar `LayoutMenu.show(...)` con Tkinter: representar cada layout como mini-mapa, manejar Esc como cancelación y propagar callbacks con `flow_id`.
+- Implementar la navegación en dos pasos: seleccionar layout y luego zona con flechas/Enter o números; al cambiar la zona, mostrar el overlay correspondiente.
 - Implementar en `snap_flow.py` el flujo hasta el primer acoplamiento: validar ventana activa → obtener monitor y work area → calcular zonas → deshabilitar layouts insuficientes → abrir menú → guardar geometría en State → ejecutar `move_resize_window` → ejecutar animación de confirmación.
 - Implementar la animación de confirmación: serie de `move_resize_window` interpolados linealmente entre la geometría actual y la geometría destino en `SNAP_ANIMATION_MS` milisegundos. Las operaciones X11 se ejecutan en el hilo coordinador para no compartir la conexión entre hilos.
 - Registrar el doble-press de Super+Z como cancelación (máquina de estados en `SnapFlow`).
@@ -391,7 +390,7 @@ Implementar la creación, modificación, disolución y consulta de Snap Groups, 
 - Implementar `GroupManager.validate_group(group_id)`: recorrer `zones`, eliminar referencias a ventanas que ya no existen (verificando contra `get_all_windows()`), disolver si el grupo queda con una sola ventana.
 - Implementar el callback de Super+Alt+Tab: obtener la ventana activa, buscar su grupo con `get_group_for_window`, llamar `validate_group`, invocar `WMBackend.focus_window` sobre cada ventana del grupo en orden de `zone_index`.
 - Implementar el overlay de consulta de grupo (Super+/): invocar `Notifier` con la lista de títulos de las ventanas del grupo activo.
-- Integrar restricciones `WM_NORMAL_HINTS`: una aplicación cuyo tamaño mínimo exceda su zona se mantiene dentro del grupo y se centra con desborde simétrico aplicando la política "Ignorar y Centrar".
+- Integrar restricciones `WM_NORMAL_HINTS`: una aplicación cuyo tamaño mínimo exceda su zona se mantiene dentro del grupo, se centra y se limita al work area para que permanezca accesible.
 - Escribir tests unitarios para: `create_group` con ventana ya en otro grupo (pertenencia exclusiva), `on_window_destroyed` con grupo que queda en una sola ventana (disolución), `validate_group` con una referencia inválida.
 
 ### Criterios técnicos de aceptación

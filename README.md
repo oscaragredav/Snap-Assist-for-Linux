@@ -23,11 +23,13 @@ La siguiente fase del plan será la 10: configurabilidad y empaquetado.
 - Filtro de ventanas elegibles, orden MRU y quickkeys; las ventanas minimizadas
   también son elegibles para el flujo de sugerencias.
 - Sugerencias automáticas para completar zonas libres, con lista congelada,
-  quickkeys, soporte entre monitores y traslado desde otros workspaces.
+  quickkeys para las primeras diez, lista desplazable para el resto, soporte
+  entre monitores y traslado desde otros workspaces.
 - Snap Groups con pertenencia exclusiva, disolución automática y recuperación
   mediante `Super+Alt+Tab`; `Super+/` muestra ayuda y estado.
 - Aplicaciones con tamaño mínimo grande, como Spotify, permanecen en el grupo:
-  se centran en su zona y desbordan simétricamente cuando es necesario.
+  se centran y se mantienen accesibles dentro del work area; si no pueden
+  representar una zona exacta, el daemon registra la restricción del cliente.
 - Operaciones multi-ventana atómicas: un fallo restaura la geometría y el
   estado previos de todas las ventanas ya movidas.
 - Seguimiento XRandR de desconexiones, suspensión de grupos del monitor
@@ -65,24 +67,23 @@ muestra los eventos operativos de nivel `INFO`, las advertencias y los errores,
 suprimiendo repeticiones durante las animaciones. El detalle `DEBUG` queda sólo
 en los archivos para evitar saturar la consola.
 
-En X11, SnapAssist calcula las zonas sobre el rectángulo visible: descuenta y
-compensa automáticamente sombras CSD declaradas por GTK, Electron y otros
-toolkits. Mientras una ventana está acoplada también suspende sus incrementos de
-tamaño (por ejemplo, la cuadrícula de caracteres de una Terminal) y restaura las
-restricciones originales al desacoplarla o al cerrar el daemon.
+En X11, SnapAssist usa un rectángulo visible canónico: compensa sombras CSD y
+decoraciones SSD (`_NET_FRAME_EXTENTS`) tanto al leer como al mover/restaurar.
+Mientras una ventana está acoplada también suspende sus incrementos de tamaño
+(por ejemplo, la cuadrícula de caracteres de una Terminal) y restaura las
+restricciones originales al desacoplarla o al cerrar el daemon. Algunos clientes
+pueden redondear su contenido unos pocos píxeles; el resultado se verifica y se
+registra en vez de repetir redimensionamientos indefinidamente.
 
 ## Pruebas
 
 ```bash
-venv/bin/python tests/test_phase1.py
-venv/bin/python tests/test_phase2.py
-venv/bin/python tests/test_phase3.py
-venv/bin/python tests/test_phase5.py
-venv/bin/python tests/test_phase6.py
-venv/bin/python tests/test_phase7.py
-venv/bin/python tests/test_phase8.py
-venv/bin/python tests/test_phase9.py
+venv/bin/python tests/run_all.py
 ```
+
+La puerta anterior ejecuta las fases 1–9, la cobertura del menú de Fase 4 y
+las regresiones de `QA_REPORT.md`. Las comprobaciones X11 reales de SSD y
+Terminal se realizan con ventanas temporales cerradas automáticamente.
 
 Los criterios funcionales y el orden completo de implementación se encuentran
 en [plan_implementacion.md](plan_implementacion.md). Los requisitos de

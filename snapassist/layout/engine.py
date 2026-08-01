@@ -76,13 +76,27 @@ class LayoutEngine:
         ]
 
     @staticmethod
-    def center_minimum_size(min_size: tuple[int, int], zone_rect: Rect) -> Rect:
-        """Centra una ventana que no puede reducirse al tamaño de su zona."""
+    def center_minimum_size(
+        min_size: tuple[int, int], zone_rect: Rect, bounds: Rect | None = None
+    ) -> Rect:
+        """Centra una ventana grande, conservando un marco accesible.
+
+        El centrado matemático puede dejar la barra de título fuera de un
+        monitor cuando una aplicación rebasa una zona superior. Si se recibe
+        ``bounds`` se limita el resultado al área de trabajo real: se preserva
+        el centrado en cuanto el gestor de ventanas lo permite y se prioriza
+        que la ventana siga siendo manipulable.
+        """
         width = max(zone_rect.w, min_size[0])
         height = max(zone_rect.h, min_size[1])
+        x = zone_rect.x + (zone_rect.w - width) // 2
+        y = zone_rect.y + (zone_rect.h - height) // 2
+        if bounds:
+            x = min(max(x, bounds.x), max(bounds.x, bounds.right - width))
+            y = min(max(y, bounds.y), max(bounds.y, bounds.bottom - height))
         return Rect(
-            x=zone_rect.x + (zone_rect.w - width) // 2,
-            y=zone_rect.y + (zone_rect.h - height) // 2,
+            x=x,
+            y=y,
             w=width,
             h=height,
         )

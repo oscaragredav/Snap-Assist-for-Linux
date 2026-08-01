@@ -87,15 +87,21 @@ class State:
 
         result: List[WindowInfo] = []
         for index, (_, info) in enumerate(ordered):
-            if index >= len(QUICKKEY_SEQUENCE):
-                logger.warning("No hay quickkey disponible para 0x%x", info.window_id)
-                break
             result.append(WindowInfo(
                 window_id=info.window_id,
                 title=info.title,
                 on_other_workspace=info.on_other_workspace,
-                quickkey=QUICKKEY_SEQUENCE[index],
+                quickkey=(
+                    QUICKKEY_SEQUENCE[index]
+                    if index < len(QUICKKEY_SEQUENCE)
+                    else None
+                ),
             ))
+        if len(result) > len(QUICKKEY_SEQUENCE):
+            logger.info(
+                "%d ventana(s) sin quickkey directo; disponibles con flechas",
+                len(result) - len(QUICKKEY_SEQUENCE),
+            )
         return result
 
     # ------------------------------------------------------------------
@@ -142,7 +148,7 @@ class State:
         self.snapped_windows[wid] = zone_ref
         logger.debug(
             "Ventana 0x%x acoplada: grupo=%s, zona=%d",
-            wid, zone_ref.group_id, zone_ref.zone_index,
+            wid, zone_ref.group_id or "independiente", zone_ref.zone_index,
         )
 
     def unmark_snapped(self, wid: int) -> None:
@@ -151,7 +157,7 @@ class State:
             ref = self.snapped_windows.pop(wid)
             logger.debug(
                 "Ventana 0x%x desacoplada: grupo=%s, zona=%d",
-                wid, ref.group_id, ref.zone_index,
+                wid, ref.group_id or "independiente", ref.zone_index,
             )
 
     # ------------------------------------------------------------------

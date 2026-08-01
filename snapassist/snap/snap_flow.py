@@ -4,7 +4,6 @@ snap/snap_flow.py — Máquina de estados para el flujo de acoplamiento.
 
 import logging
 from typing import List, Optional
-from uuid import uuid4
 
 from snapassist.wm.backend import WindowManager
 from snapassist.core.state import State
@@ -82,6 +81,16 @@ class SnapFlow:
             if not parent_wid:
                 break
             active_wid = parent_wid
+
+        eligible_loader = getattr(self._wm, "get_eligible_windows", None)
+        eligible_ids = (
+            {info.window_id for info in eligible_loader()}
+            if eligible_loader else set(self._wm.get_all_windows())
+        )
+        if active_wid not in eligible_ids:
+            logger.info("Ventana activa 0x%x no es elegible. Abortando flujo.", active_wid)
+            Notifier.send("La ventana activa no es elegible para acoplarla.")
+            return
             
         self._is_active = True
         self._phase = "layout"
@@ -89,6 +98,11 @@ class SnapFlow:
         self._active_wid = active_wid
         self._monitor_idx = self._wm.get_monitor_for_window(active_wid)
         self._monitor_rect = self._wm.get_work_area(self._monitor_idx)
+        if self._monitor_rect.w <= 0 or self._monitor_rect.h <= 0:
+            logger.warning("Work area inválida: %s", self._monitor_rect)
+            Notifier.send("No hay área de trabajo disponible para acoplar.")
+            self._reset()
+            return
         
         logger.info("Iniciando flujo UI para ventana 0x%x en monitor %d", active_wid, self._monitor_idx)
         
@@ -169,7 +183,8 @@ class SnapFlow:
         self._selected_layout_index = layout_index
         self._occupied_zones = []
         self._current_zone = None
-        self._group_id = f"phase7-{uuid4()}"
+        # Hasta que haya dos miembros no existe un Snap Group real.
+        self._group_id = None
         self._snapped_map = {}
         self._eligible_windows = self._freeze_eligible_windows(wid_to_animate)
         self._phase = "animating"
@@ -190,6 +205,7 @@ class SnapFlow:
                 zone_index,
                 target_rect,
                 self._group_id,
+                bounds=self._monitor_rect,
             ):
                 self._rollback_transaction("falló la primera ventana")
                 return
@@ -244,6 +260,7 @@ class SnapFlow:
             zone_index,
             target_rect,
             self._group_id,
+            bounds=self._monitor_rect,
         ):
             self._rollback_transaction(f"falló la ventana sugerida 0x{wid:x}")
             return
@@ -380,6 +397,18 @@ class SnapFlow:
         if self._is_active:
             logger.info("Topología de monitores cambió; cerrando flujo activo")
             self.cancel()
+
+    def on_ui_command_failed(
+        self, action: str, error: str, flow_id: Optional[int] = None
+    ) -> None:
+        """Recupera el coordinador si Tkinter no pudo mostrar un flujo."""
+        if not self._accepts_callback(flow_id):
+            return
+        logger.error("La UI falló en '%s': %s", action, error)
+        if self._transaction_state_snapshot is not None:
+            self._rollback_transaction(f"falló UI '{action}': {error}")
+        else:
+            self.cancel(flow_id)
 
     def _begin_transaction(self) -> None:
         if self._transaction_state_snapshot is None:

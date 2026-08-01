@@ -6,6 +6,7 @@ mediante los átomos EWMH estándar.
 """
 
 import logging
+import time
 from typing import List, Optional
 
 from Xlib import X, Xutil, display, Xatom
@@ -43,6 +44,8 @@ class X11Backend(WindowManager):
             "_NET_ACTIVE_WINDOW": self._display.intern_atom("_NET_ACTIVE_WINDOW"),
             "_NET_SUPPORTED": self._display.intern_atom("_NET_SUPPORTED"),
             "_NET_WORKAREA": self._display.intern_atom("_NET_WORKAREA"),
+            "_NET_WM_STRUT": self._display.intern_atom("_NET_WM_STRUT"),
+            "_NET_WM_STRUT_PARTIAL": self._display.intern_atom("_NET_WM_STRUT_PARTIAL"),
             "_NET_WM_NAME": self._display.intern_atom("_NET_WM_NAME"),
             "_NET_WM_WINDOW_TYPE": self._display.intern_atom("_NET_WM_WINDOW_TYPE"),
             "_NET_WM_WINDOW_TYPE_NORMAL": self._display.intern_atom(
@@ -81,6 +84,7 @@ class X11Backend(WindowManager):
             "WM_TRANSIENT_FOR": self._display.intern_atom("WM_TRANSIENT_FOR"),
             "UTF8_STRING": self._display.intern_atom("UTF8_STRING"),
             "_GTK_FRAME_EXTENTS": self._display.intern_atom("_GTK_FRAME_EXTENTS"),
+            "_NET_FRAME_EXTENTS": self._display.intern_atom("_NET_FRAME_EXTENTS"),
             "_NET_MOVERESIZE_WINDOW": self._display.intern_atom("_NET_MOVERESIZE_WINDOW"),
         }
 
@@ -154,14 +158,17 @@ class X11Backend(WindowManager):
         reporte como no visibles, Snap Assist puede restaurarlas al enfocarlas.
         """
         try:
-            prop = self._root.get_full_property(
-                self._atoms["_NET_CLIENT_LIST"], X.AnyPropertyType
-            )
-            if prop and prop.value is not None:
-                return [int(wid) for wid in prop.value if self._is_eligible_window(int(wid))]
+            return [wid for wid in self._get_raw_client_windows() if self._is_eligible_window(wid)]
         except Exception as e:
             logger.error("Error leyendo _NET_CLIENT_LIST: %s", e)
         return []
+
+    def _get_raw_client_windows(self) -> List[int]:
+        """Retorna `_NET_CLIENT_LIST` sin el filtro de elegibilidad."""
+        prop = self._root.get_full_property(
+            self._atoms["_NET_CLIENT_LIST"], X.AnyPropertyType
+        )
+        return [int(wid) for wid in prop.value] if prop and prop.value is not None else []
 
     def get_transient_children(self, wid: int) -> List[int]:
         """Retorna diálogos cuyo WM_TRANSIENT_FOR apunta a ``wid``.
@@ -259,11 +266,15 @@ class X11Backend(WindowManager):
                 and self._atoms["_NET_WM_STATE_MAXIMIZED_HORZ"] in states
             )
 
-            buffer_rect = Rect(abs_x, abs_y, geom.width, geom.height)
-            visible_rect = self._visible_rect_from_buffer(
-                buffer_rect, self._get_frame_extents(window)
-            )
-            return WindowGeometry(rect=visible_rect, is_maximized=is_maximized)
+            raw_rect = Rect(abs_x, abs_y, geom.width, geom.height)
+            frame_model, extents = self._get_frame_model(window)
+            if frame_model == "csd":
+                outer_rect = self._visible_rect_from_buffer(raw_rect, extents)
+            elif frame_model == "ssd":
+                outer_rect = self._outer_rect_from_client(raw_rect, extents)
+            else:
+                outer_rect = raw_rect
+            return WindowGeometry(rect=outer_rect, is_maximized=is_maximized)
         except (BadWindow, BadDrawable) as e:
             logger.warning("Ventana 0x%x desaparecida al leer geometría: %s", wid, e)
             return WindowGeometry(rect=Rect(0, 0, 0, 0))
@@ -289,10 +300,21 @@ class X11Backend(WindowManager):
                         value = 1
                 return max(1, int(value or 1))
 
-            return (
-                hint_value("min_width"),
-                hint_value("min_height"),
-            )
+            min_width = hint_value("min_width")
+            min_height = hint_value("min_height")
+            frame_model, extents = self._get_frame_model(window)
+            left, right, top, bottom = extents
+            if frame_model == "csd":
+                return (
+                    max(1, min_width - left - right),
+                    max(1, min_height - top - bottom),
+                )
+            if frame_model == "ssd":
+                return (
+                    min_width + left + right,
+                    min_height + top + bottom,
+                )
+            return (min_width, min_height)
         except (BadWindow, BadDrawable):
             return (1, 1)
         except Exception as e:
@@ -402,6 +424,13 @@ class X11Backend(WindowManager):
         monitors = self._get_monitors()
         if monitors and 0 <= monitor_index < len(monitors):
             mon_rect = monitors[monitor_index]
+            strut_work_area = self._work_area_from_struts(mon_rect)
+            if strut_work_area:
+                logger.debug(
+                    "Work area del monitor %d desde struts: %s",
+                    monitor_index, strut_work_area,
+                )
+                return strut_work_area
             if global_wa:
                 # Intersectar el workarea global con el monitor
                 ix = max(mon_rect.x, global_wa.x)
@@ -424,6 +453,71 @@ class X11Backend(WindowManager):
             
         screen = self._display.screen()
         return Rect(x=0, y=0, w=screen.width_in_pixels, h=screen.height_in_pixels)
+
+    def _work_area_from_struts(self, monitor: Rect) -> Optional[Rect]:
+        """Calcula el área útil de un monitor usando docks EWMH reales.
+
+        `_NET_WORKAREA` es global y no puede expresar que un panel pertenezca
+        sólo a una pantalla. Los struts parciales sí incluyen los intervalos
+        afectados, por lo que se prefieren cuando están disponibles.
+        """
+        try:
+            raw_clients = self._get_raw_client_windows()
+            screen = self._display.screen()
+            screen_rect = Rect(0, 0, screen.width_in_pixels, screen.height_in_pixels)
+            left = right = top = bottom = 0
+            found_strut = False
+            for wid in raw_clients:
+                window = self._display.create_resource_object("window", wid)
+                prop = window.get_full_property(
+                    self._atoms["_NET_WM_STRUT_PARTIAL"], X.AnyPropertyType
+                )
+                values = list(prop.value) if prop and prop.value is not None else []
+                if len(values) < 12:
+                    prop = window.get_full_property(
+                        self._atoms["_NET_WM_STRUT"], X.AnyPropertyType
+                    )
+                    values = list(prop.value) if prop and prop.value is not None else []
+                    if len(values) >= 4:
+                        values = values[:4] + [
+                            screen_rect.y, screen_rect.bottom - 1,
+                            screen_rect.y, screen_rect.bottom - 1,
+                            screen_rect.x, screen_rect.right - 1,
+                            screen_rect.x, screen_rect.right - 1,
+                        ]
+                if len(values) < 12:
+                    continue
+                found_strut = True
+                l, r, t, b, ls, le, rs, re, ts, te, bs, be = (
+                    int(value) for value in values[:12]
+                )
+                if l and self._ranges_overlap(monitor.y, monitor.bottom - 1, ls, le):
+                    left = max(left, max(0, min(monitor.right, l) - monitor.x))
+                if r and self._ranges_overlap(monitor.y, monitor.bottom - 1, rs, re):
+                    right_edge = screen_rect.right - r
+                    right = max(right, max(0, monitor.right - max(monitor.x, right_edge)))
+                if t and self._ranges_overlap(monitor.x, monitor.right - 1, ts, te):
+                    top = max(top, max(0, min(monitor.bottom, t) - monitor.y))
+                if b and self._ranges_overlap(monitor.x, monitor.right - 1, bs, be):
+                    bottom_edge = screen_rect.bottom - b
+                    bottom = max(bottom, max(0, monitor.bottom - max(monitor.y, bottom_edge)))
+            if not found_strut:
+                return None
+            return Rect(
+                monitor.x + left,
+                monitor.y + top,
+                max(0, monitor.w - left - right),
+                max(0, monitor.h - top - bottom),
+            )
+        except (BadWindow, BadDrawable):
+            return None
+        except Exception as error:
+            logger.debug("No se pudieron calcular struts por monitor: %s", error)
+            return None
+
+    @staticmethod
+    def _ranges_overlap(start_a: int, end_a: int, start_b: int, end_b: int) -> bool:
+        return max(start_a, start_b) <= min(end_a, end_b)
 
     def get_monitors(self) -> List[Rect]:
         """Expone una copia de la topología actual para el coordinador."""
@@ -506,6 +600,11 @@ class X11Backend(WindowManager):
             if normalized != original:
                 window.set_wm_normal_hints(normalized)
                 self._display.flush()
+                # Los clientes como Terminal procesan PropertyNotify de forma
+                # asíncrona. Un round-trip corto evita que el primer resize se
+                # calcule todavía con incrementos de celda antiguos.
+                self._display.sync()
+                time.sleep(0.04)
                 logger.debug(
                     "Restricciones geométricas suspendidas para 0x%x "
                     "(incremento original=%dx%d)",
@@ -556,22 +655,36 @@ class X11Backend(WindowManager):
         normalized["base_height"] = 0
         return normalized
 
-    def _get_frame_extents(self, window) -> tuple[int, int, int, int]:
+    def _get_frame_model(self, window) -> tuple[str, tuple[int, int, int, int]]:
+        """Describe el espacio geométrico del cliente y sus decoraciones.
+
+        ``_GTK_FRAME_EXTENTS`` representa márgenes CSD *dentro* del búfer del
+        cliente: para leer hay que restarlos y para mover hay que sumarlos.
+        ``_NET_FRAME_EXTENTS`` describe el marco SSD *fuera* del cliente: para
+        leer hay que sumarlo. En Mutter, EWMH conserva la posición de marco
+        pero recibe ancho/alto de cliente; mantener ambos modelos separados
+        evita aplicar la compensación al revés.
         """
-        Retorna (left, right, top, bottom) leyendo _GTK_FRAME_EXTENTS.
-        Esto es crítico en GNOME (Zorin) porque las decoraciones CSD (sombras)
-        son parte de la ventana X11. Si queremos que la ventana visual ocupe 
-        un área, debemos compensar estos márgenes invisibles.
-        """
-        try:
-            prop = window.get_full_property(
-                self._atoms["_GTK_FRAME_EXTENTS"], X.AnyPropertyType
-            )
-            if prop and prop.value and len(prop.value) >= 4:
-                return (prop.value[0], prop.value[1], prop.value[2], prop.value[3])
-        except Exception:
-            pass
-        return (0, 0, 0, 0)
+        def read_extents(atom_name: str):
+            try:
+                prop = window.get_full_property(
+                    self._atoms[atom_name], X.AnyPropertyType
+                )
+                if prop and prop.value and len(prop.value) >= 4:
+                    return tuple(max(0, int(value)) for value in prop.value[:4])
+            except Exception:
+                return None
+            return None
+
+        gtk_extents = read_extents("_GTK_FRAME_EXTENTS")
+        if gtk_extents and any(gtk_extents):
+            return ("csd", gtk_extents)
+
+        net_extents = read_extents("_NET_FRAME_EXTENTS")
+        if net_extents and any(net_extents):
+            return ("ssd", net_extents)
+
+        return ("client", (0, 0, 0, 0))
 
     def move_resize_window(self, wid: int, rect: Rect) -> bool:
         """
@@ -589,8 +702,15 @@ class X11Backend(WindowManager):
             window.get_attributes()
             self._pending_own_resizes.add(wid)
 
-            extents = self._get_frame_extents(window)
-            requested_rect = self._compensate_csd_rect(rect, extents)
+            frame_model, extents = self._get_frame_model(window)
+            if frame_model == "csd":
+                requested_rect = self._compensate_csd_rect(rect, extents)
+            elif frame_model == "ssd":
+                # Mutter interpreta _NET_MOVERESIZE_WINDOW como geometría del
+                # cliente incluso si la aplicación usa decoraciones del WM.
+                requested_rect = self._client_rect_from_outer(rect, extents)
+            else:
+                requested_rect = rect
             expected_geometry = (
                 requested_rect.x,
                 requested_rect.y,
@@ -607,7 +727,10 @@ class X11Backend(WindowManager):
                 | (1 << 9)  # y
                 | (1 << 10) # width
                 | (1 << 11) # height
-                | (1 << 12) # source indication: aplicación
+                # source indication: pager/gestor. SnapAssist decide una
+                # geometría de marco, no una petición del cliente que Mutter
+                # pueda reinterpretar según sus incrementos internos.
+                | (2 << 12)
             )
             if self._supports_moveresize:
                 moveresize_event = xevent.ClientMessage(
@@ -635,8 +758,8 @@ class X11Backend(WindowManager):
                 )
             self._display.flush()
             logger.debug(
-                "move_resize_window: 0x%x → visible=%s, X11=%s, extents=%s",
-                wid, rect, requested_rect, extents,
+                "move_resize_window: 0x%x → exterior=%s, X11=%s, modelo=%s, extents=%s",
+                wid, rect, requested_rect, frame_model, extents,
             )
             return True
         except (BadWindow, BadDrawable):
@@ -652,6 +775,55 @@ class X11Backend(WindowManager):
             )
             self._pending_own_resizes.discard(wid)
             return False
+
+    def reconcile_window_geometry(
+        self, wid: int, target: Rect, max_attempts: int = 2, tolerance_px: int = 4
+    ) -> bool:
+        """Cierra pequeñas diferencias que el cliente introduce tras un resize.
+
+        EWMH procesa la petición de forma asíncrona y ciertos clientes vuelven
+        a aplicar restricciones propias justo después. Se mide el rectángulo
+        canónico (visible/exterior) y se aplica como máximo dos correcciones
+        diferenciales. Si el cliente impone un mínimo real, se conserva su
+        resultado y se deja una advertencia diagnóstica, sin bucles infinitos.
+        """
+        tolerance = max(0, tolerance_px)
+        for attempt in range(max(0, max_attempts) + 1):
+            self._display.sync()
+            # Permite al cliente reaccionar a PropertyNotify/ConfigureNotify.
+            time.sleep(0.05)
+            actual = self.get_window_geometry(wid).rect
+            deltas = (
+                abs(actual.x - target.x), abs(actual.y - target.y),
+                abs(actual.w - target.w), abs(actual.h - target.h),
+            )
+            if max(deltas) <= tolerance:
+                if attempt:
+                    logger.debug(
+                        "Geometría de 0x%x reconciliada tras %d intento(s): %s",
+                        wid, attempt, target,
+                    )
+                return True
+            if attempt >= max_attempts:
+                logger.warning(
+                    "La ventana 0x%x no aceptó exactamente la zona %s; "
+                    "resultado final=%s tras %d correcciones",
+                    wid, target, actual, max_attempts,
+                )
+                return False
+            correction = Rect(
+                target.x + (target.x - actual.x),
+                target.y + (target.y - actual.y),
+                max(1, target.w + (target.w - actual.w)),
+                max(1, target.h + (target.h - actual.h)),
+            )
+            logger.debug(
+                "Corrigiendo geometría de 0x%x: objetivo=%s, actual=%s, petición=%s",
+                wid, target, actual, correction,
+            )
+            if not self.move_resize_window(wid, correction):
+                return False
+        return False
 
     @staticmethod
     def _to_card32(value: int) -> int:
@@ -682,6 +854,34 @@ class X11Backend(WindowManager):
             rect.y + top,
             max(0, rect.w - left - right),
             max(0, rect.h - top - bottom),
+        )
+
+    @staticmethod
+    def _client_rect_from_outer(
+        rect: Rect, extents: tuple[int, int, int, int]
+    ) -> Rect:
+        """Convierte un marco SSD visible en la geometría cliente que pide EWMH."""
+        left, right, top, bottom = (max(0, int(v)) for v in extents)
+        return Rect(
+            # EWMH expresa posición en el espacio del marco, pero en Mutter
+            # ancho/alto siguen siendo los del cliente para una ventana SSD.
+            rect.x,
+            rect.y,
+            max(1, rect.w - left - right),
+            max(1, rect.h - top - bottom),
+        )
+
+    @staticmethod
+    def _outer_rect_from_client(
+        rect: Rect, extents: tuple[int, int, int, int]
+    ) -> Rect:
+        """Convierte geometría cliente SSD en el rectángulo exterior visible."""
+        left, right, top, bottom = (max(0, int(value)) for value in extents)
+        return Rect(
+            rect.x - left,
+            rect.y - top,
+            rect.w + left + right,
+            rect.h + top + bottom,
         )
 
     def watch_snapped_window(self, wid: int) -> None:

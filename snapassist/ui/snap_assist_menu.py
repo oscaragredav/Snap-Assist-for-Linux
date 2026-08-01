@@ -25,15 +25,16 @@ class SnapAssistMenu:
         self._on_cancel = on_cancel
         self._windows: List[WindowInfo] = []
         self._active_index = 0
-        self._rows = []
+        self._listbox = None
+        self._position_label = None
         self._visible = False
         self._generation = 0
 
-        self._window.bind("<Up>", lambda _event: self._move(-1))
-        self._window.bind("<Down>", lambda _event: self._move(1))
-        self._window.bind("<Return>", lambda _event: self._confirm())
-        self._window.bind("<Escape>", lambda _event: self._cancel("escape"))
-        self._window.bind("<Key>", self._quickkey)
+        self._window.bind("<Up>", lambda _event: self._handle_move(-1))
+        self._window.bind("<Down>", lambda _event: self._handle_move(1))
+        self._window.bind("<Return>", self._handle_confirm)
+        self._window.bind("<Escape>", self._handle_escape)
+        self._window.bind("<Key>", self._handle_quickkey)
         self._window.bind("<FocusOut>", self._focus_lost)
 
     def show(self, eligible_windows: List[WindowInfo], zone_rect: Rect) -> None:
@@ -43,7 +44,9 @@ class SnapAssistMenu:
         self._draw()
 
         width = max(280, min(520, zone_rect.w - 32))
-        height = max(160, min(420, 70 + len(self._windows) * 42))
+        # Ocho filas visibles conservan una lectura cómoda; el resto se alcanza
+        # por scrollbar, flechas y auto-scroll de la selección.
+        height = max(160, min(420, 70 + min(8, len(self._windows)) * 42))
         width = min(width, zone_rect.w)
         height = min(height, zone_rect.h)
         x = zone_rect.x + max(0, (zone_rect.w - width) // 2)
@@ -71,8 +74,6 @@ class SnapAssistMenu:
     def _draw(self) -> None:
         for widget in self._window.winfo_children():
             widget.destroy()
-        self._rows = []
-
         title = tk.Label(
             self._window,
             text="Completar esta zona",
@@ -82,22 +83,61 @@ class SnapAssistMenu:
             pady=12,
         )
         title.pack(fill="x")
+        self._position_label = tk.Label(
+            self._window,
+            fg="#9ca3af",
+            bg="#1f2933",
+            font=("Inter", 9),
+        )
+        self._position_label.pack(fill="x", pady=(0, 5))
+
+        list_frame = tk.Frame(self._window, bg="#1f2933")
+        list_frame.pack(expand=True, fill="both", padx=12, pady=(0, 10))
+        scrollbar = tk.Scrollbar(list_frame, orient="vertical")
+        self._listbox = tk.Listbox(
+            list_frame,
+            activestyle="none",
+            exportselection=False,
+            selectbackground="#2563eb",
+            selectforeground="#ffffff",
+            bg="#374151",
+            fg="#e5e7eb",
+            highlightthickness=0,
+            relief="flat",
+            font=("Inter", 11),
+            yscrollcommand=scrollbar.set,
+        )
+        scrollbar.configure(command=self._listbox.yview)
+        self._listbox.pack(side="left", expand=True, fill="both")
+        scrollbar.pack(side="right", fill="y")
 
         for info in self._windows:
-            key = (info.quickkey or "?").upper()
+            key = (info.quickkey or "→").upper()
             text = f"[{key}]  {info.title or f'Ventana 0x{info.window_id:x}'}"
-            row = tk.Label(
-                self._window,
-                text=text,
-                anchor="w",
-                padx=14,
-                pady=8,
-                fg="#e5e7eb",
-                bg="#374151",
-                font=("Inter", 11),
-            )
-            row.pack(fill="x", padx=12, pady=2)
-            self._rows.append(row)
+            self._listbox.insert("end", text)
+
+        for widget in (self._window, self._listbox):
+            widget.bind("<Up>", lambda _event: self._handle_move(-1))
+            widget.bind("<Down>", lambda _event: self._handle_move(1))
+            widget.bind("<Return>", self._handle_confirm)
+            widget.bind("<Escape>", self._handle_escape)
+            widget.bind("<Key>", self._handle_quickkey)
+
+    def _handle_move(self, delta: int) -> str:
+        self._move(delta)
+        return "break"
+
+    def _handle_confirm(self, _event) -> str:
+        self._confirm()
+        return "break"
+
+    def _handle_escape(self, _event) -> str:
+        self._cancel("escape")
+        return "break"
+
+    def _handle_quickkey(self, event) -> str:
+        self._quickkey(event)
+        return "break"
 
     def _move(self, delta: int) -> None:
         if not self._windows:
@@ -106,8 +146,16 @@ class SnapAssistMenu:
         self._paint_selection()
 
     def _paint_selection(self) -> None:
-        for index, row in enumerate(self._rows):
-            row.configure(bg="#2563eb" if index == self._active_index else "#374151")
+        if not self._listbox:
+            return
+        self._listbox.selection_clear(0, "end")
+        self._listbox.selection_set(self._active_index)
+        self._listbox.activate(self._active_index)
+        self._listbox.see(self._active_index)
+        if self._position_label:
+            self._position_label.configure(
+                text=f"{self._active_index + 1}/{len(self._windows)}"
+            )
 
     def _confirm(self) -> None:
         if self._windows:

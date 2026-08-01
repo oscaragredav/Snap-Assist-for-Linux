@@ -111,6 +111,17 @@ class WindowManager(ABC):
     def release_window_from_snap(self, wid: int) -> None:
         """Restaura las restricciones alteradas durante el acoplamiento."""
 
+    def reconcile_window_geometry(
+        self, wid: int, target: Rect, max_attempts: int = 2, tolerance_px: int = 4
+    ) -> bool:
+        """Comprueba el resultado final de un snap y lo corrige si el WM lo alteró.
+
+        Es un no-op para backends que no puedan leer de vuelta la geometría
+        efectiva. X11 lo usa para clientes que procesan su tamaño de manera
+        asíncrona (por ejemplo, aplicaciones GTK/terminales).
+        """
+        return True
+
     @abstractmethod
     def focus_window(self, wid: int) -> None:
         """Pide el foco para la ventana dada."""

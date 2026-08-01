@@ -145,7 +145,7 @@ def test_snap_engine_workflow():
     
     # 5. ¿Se registró en el estado?
     assert wid in state.snapped_windows
-    assert state.snapped_windows[wid].group_id == "dummy-phase3-group"
+    assert state.snapped_windows[wid].group_id is None
     assert state.snapped_windows[wid].zone_index == 0
     
     print("  ✓ Flujo del SnapEngine correcto.")

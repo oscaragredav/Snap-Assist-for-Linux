@@ -170,6 +170,19 @@ class UIManager:
                 
         except Exception as e:
             logger.error("Error procesando comando UI '%s': %s", action, e)
+            flow_id = cmd.get("flow_id")
+            if flow_id is None:
+                flow_id = (
+                    self._layout_flow_id
+                    if action in {"show_menu", "hide_menu"}
+                    else self._snap_assist_flow_id
+                )
+            self._callback_queue.put({
+                "event": "ui_command_failed",
+                "flow_id": flow_id,
+                "action": action,
+                "error": str(e),
+            })
 
     # ------------------------------------------------------------------
     # Callbacks desde la UI (ejecutados en el UI Thread)

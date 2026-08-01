@@ -8,6 +8,7 @@ Coordina las tres capas:
 """
 
 import logging
+from typing import Optional
 
 from snapassist.config import LayoutTemplate, Rect, ZoneRef
 from snapassist.core.state import State
@@ -37,7 +38,7 @@ class SnapEngine:
         wid: int,
         layout: LayoutTemplate,
         zone_index: int,
-        group_id: str = "dummy-phase3-group",
+        group_id: Optional[str] = None,
     ) -> None:
         """
         Ancla una ventana a la zona especificada de un layout.
@@ -55,7 +56,9 @@ class SnapEngine:
             work_area=work_area,
             zone=layout.zones[zone_index],
         )
-        return self.snap_window_to_rect(wid, layout, zone_index, target_rect, group_id)
+        return self.snap_window_to_rect(
+            wid, layout, zone_index, target_rect, group_id, bounds=work_area
+        )
 
     def snap_window_to_rect(
         self,
@@ -63,7 +66,8 @@ class SnapEngine:
         layout: LayoutTemplate,
         zone_index: int,
         target_rect: Rect,
-        group_id: str,
+        group_id: Optional[str],
+        bounds: Optional[Rect] = None,
     ) -> bool:
         """Acopla una ventana a un rectángulo ya calculado.
 
@@ -80,7 +84,9 @@ class SnapEngine:
 
         min_size_reader = getattr(self._wm, "get_window_min_size", None)
         min_size = min_size_reader(wid) if min_size_reader else (1, 1)
-        adjusted_rect = self._layout.center_minimum_size(min_size, target_rect)
+        adjusted_rect = self._layout.center_minimum_size(
+            min_size, target_rect, bounds=bounds
+        )
         if adjusted_rect != target_rect:
             logger.warning(
                 "Ignorar y Centrar: 0x%x requiere mínimo %dx%d; "
@@ -109,6 +115,13 @@ class SnapEngine:
             if release:
                 release(wid)
             return False
+
+        reconcile = getattr(self._wm, "reconcile_window_geometry", None)
+        if reconcile and not reconcile(wid, adjusted_rect):
+            logger.warning(
+                "La geometría final de 0x%x difiere de la zona solicitada %s",
+                wid, adjusted_rect,
+            )
 
         transient_loader = getattr(self._wm, "get_transient_children", None)
         for child_wid in (transient_loader(wid) if transient_loader else []):

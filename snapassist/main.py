@@ -232,6 +232,27 @@ def create_super_z_callback(wm_backend, state: State, snap_engine: SnapEngine):
     return on_super_z
 
 
+def build_help_message(wm_backend, state: State, group_manager, active_wid) -> str:
+    """Construye el contenido de `Super+/`, también reutilizable en pruebas."""
+    group = group_manager.get_group_for_window(active_wid) if active_wid else None
+    lines = [
+        "Super+Z — layouts",
+        "Super+Alt+Tab — traer grupo al frente",
+        "Super+/ — ayuda y estado",
+        "",
+        "Daemon: activo",
+        f"Grupos activos: {len(state.active_groups)}",
+        f"Ventanas monitoreadas: {len(wm_backend.get_all_windows())}",
+    ]
+    if group:
+        titles = [
+            wm_backend.get_window_title(wid)
+            for wid in group_manager.get_all_windows_in_group(group.group_id)
+        ]
+        lines.extend(["", "Grupo activo:", *[f"• {title}" for title in titles]])
+    return "\n".join(lines)
+
+
 from snapassist.ui.ui_manager import UIManager
 from snapassist.snap.snap_flow import SnapFlow
 import queue
@@ -300,22 +321,10 @@ def main() -> None:
 
     def on_help():
         active_wid = wm_backend.get_active_window()
-        group = group_manager.get_group_for_window(active_wid) if active_wid else None
-        lines = [
-            "Super+Z — layouts",
-            "Super+Alt+Tab — traer grupo al frente",
-            "Super+/ — ayuda y estado",
-            "",
-            f"Grupos activos: {len(state.active_groups)}",
-            f"Ventanas monitoreadas: {len(wm_backend.get_all_windows())}",
-        ]
-        if group:
-            titles = [
-                wm_backend.get_window_title(wid)
-                for wid in group_manager.get_all_windows_in_group(group.group_id)
-            ]
-            lines.extend(["", "Grupo activo:", *[f"• {title}" for title in titles]])
-        Notifier.send("\n".join(lines), timeout_ms=6000)
+        Notifier.send(
+            build_help_message(wm_backend, state, group_manager, active_wid),
+            timeout_ms=6000,
+        )
 
     if not hotkey_manager.register(HOTKEY_SNAP_GROUPS, on_snap_group):
         logger.error("No se pudo registrar el atajo '%s'.", HOTKEY_SNAP_GROUPS)

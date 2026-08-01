@@ -78,6 +78,10 @@ def test_drag_threshold_and_own_resize_filtering():
     class WM:
         def __init__(self):
             self.own_resize = True
+            self.rect = Rect(0, 0, 800, 600)
+
+        def get_window_geometry(self, _wid):
+            return WindowGeometry(self.rect)
 
         def consume_own_resize(self, _wid):
             result = self.own_resize
@@ -91,10 +95,12 @@ def test_drag_threshold_and_own_resize_filtering():
     daemon._drag_starts = {}
     daemon._drag_distances = {}
     daemon._gesture_modes = {}
+    daemon._gesture_geometries = {}
 
     daemon._handle_button_press(SimpleNamespace(window=42, root_x=10, root_y=10))
     daemon._handle_motion_notify(SimpleNamespace(window=42, root_x=15, root_y=10))
     assert detached == []
+    daemon._wm.rect = Rect(9, 0, 800, 600)
     daemon._handle_motion_notify(SimpleNamespace(window=42, root_x=19, root_y=10))
     assert detached == [("drag", 42)]
 
@@ -118,8 +124,11 @@ def test_global_pointer_events_do_not_require_window_event_subscription():
         def get_active_window(self):
             return 42
 
+        def __init__(self):
+            self.rect = Rect(0, 0, 800, 600)
+
         def get_window_geometry(self, _wid):
-            return WindowGeometry(Rect(0, 0, 800, 600))
+            return WindowGeometry(self.rect)
 
     daemon = Daemon.__new__(Daemon)
     daemon._state = state
@@ -128,10 +137,12 @@ def test_global_pointer_events_do_not_require_window_event_subscription():
     daemon._drag_starts = {}
     daemon._drag_distances = {}
     daemon._gesture_modes = {}
+    daemon._gesture_geometries = {}
 
     daemon._handle_pointer_event({"event": "pointer_press", "x": 100, "y": 30})
     daemon._handle_pointer_event({"event": "pointer_move", "x": 105, "y": 30})
     assert detached == []
+    daemon._wm.rect = Rect(9, 0, 800, 600)
     daemon._handle_pointer_event({"event": "pointer_move", "x": 109, "y": 30})
     assert detached == [42]
 
@@ -149,11 +160,14 @@ def test_pointer_edge_resize_detaches_without_restore():
             detached.append(("resize", wid))
 
     class WM:
+        def __init__(self):
+            self.rect = Rect(100, 100, 800, 600)
+
         def get_active_window(self):
             return 42
 
         def get_window_geometry(self, _wid):
-            return WindowGeometry(Rect(100, 100, 800, 600))
+            return WindowGeometry(self.rect)
 
     daemon = Daemon.__new__(Daemon)
     daemon._state = state
@@ -162,8 +176,10 @@ def test_pointer_edge_resize_detaches_without_restore():
     daemon._drag_starts = {}
     daemon._drag_distances = {}
     daemon._gesture_modes = {}
+    daemon._gesture_geometries = {}
 
     daemon._handle_pointer_event({"event": "pointer_press", "x": 900, "y": 400})
+    daemon._wm.rect = Rect(100, 100, 810, 600)
     daemon._handle_pointer_event({"event": "pointer_move", "x": 910, "y": 400})
     assert detached == [("resize", 42)]
 

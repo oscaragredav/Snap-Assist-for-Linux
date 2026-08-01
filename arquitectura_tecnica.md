@@ -16,12 +16,12 @@ No es un documento de requerimientos funcionales (ese es un documento separado) 
 SnapAssist es un **daemon de usuario** (proceso en segundo plano que corre en la sesión del usuario, no como root) que:
 
 1. Se subscribe a eventos del servidor X11 para conocer en tiempo real el estado de todas las ventanas del sistema.
-2. Captura atajos de teclado globales mediante `XGrabKey` para recibir invocaciones del usuario independientemente de qué aplicación tenga el foco.
+2. Captura atajos de teclado globales mediante `pynput`/XRecord para recibir invocaciones del usuario independientemente de qué aplicación tenga el foco.
 3. Mantiene en memoria el estado completo del sistema: historial MRU, geometrías previas, grupos activos, y layouts en curso.
-4. Delega la presentación visual al proceso externo `rofi` y a overlays propios dibujados con `tkinter`.
+4. Delega la presentación visual a componentes `tkinter` ejecutados en su propio hilo y a overlays propios.
 5. Ejecuta operaciones de movimiento y redimensionamiento de ventanas mediante llamadas directas al protocolo X11.
 
-El daemon es el único proceso persistente del sistema. Todo lo demás (Rofi, overlays) se instancia bajo demanda y termina al completar su función.
+El daemon es el único proceso persistente del sistema. La UI Tkinter se mantiene en un hilo dedicado y sus menús/overlays se muestran u ocultan bajo demanda.
 
 ---
 
@@ -35,7 +35,7 @@ snapassist/
 ├── core/
 │   ├── daemon.py            # Event loop principal, despacho de eventos X11
 │   ├── state.py             # Estado global en memoria (MRU, grupos, geometrías)
-│   └── hotkeys.py           # Registro y captura de atajos globales (XGrabKey)
+│   └── hotkeys.py           # Registro y captura de atajos globales (pynput/XRecord)
 │
 ├── wm/
 │   ├── backend.py           # Interfaz abstracta WindowManager (protocolo)
@@ -51,14 +51,12 @@ snapassist/
 │   └── group_manager.py     # Gestión de Snap Groups: creación, disolución, validación
 │
 ├── ui/
-│   ├── layout_menu.py       # Menú visual de selección de layouts (Rofi o tkinter)
-│   ├── snap_assist_menu.py  # Menú de sugerencias de ventanas en zonas vacías (Rofi)
+│   ├── layout_menu.py       # Menú visual de selección de layouts (Tkinter)
+│   ├── snap_assist_menu.py  # Menú de sugerencias desplazable (Tkinter)
 │   ├── overlay.py           # Overlay semitransparente de zona sobre la pantalla real
 │   └── notifier.py          # Notificaciones no intrusivas (notify-send)
 │
 ├── config.py                # Constantes configurables: atajos, umbrales, duraciones
-└── themes/
-    └── snap_assist.rasi     # Tema Rofi para el menú de Snap Assist
 ```
 
 ### Principio de organización
@@ -116,16 +114,16 @@ No persiste nada a disco.
 
 ### 3.4 `core/hotkeys.py`
 
-Responsable del registro y captura de atajos globales mediante `XGrabKey`.
-
-`XGrabKey` es una llamada del protocolo X11 que instruye al servidor X a redirigir al proceso registrante los eventos de teclado correspondientes a una combinación de tecla+modificadores, independientemente de qué ventana tenga el foco en ese momento. Esto es lo que permite al daemon interceptar Super+Z aunque el usuario esté dentro de un navegador o un editor.
+Responsable del registro y captura de atajos globales mediante el listener
+`pynput` respaldado por XRecord. Permite al daemon interceptar Super+Z aunque
+el foco esté dentro de un navegador o un editor.
 
 Responsabilidades:
 
 - Registrar todos los atajos definidos en `config.py` al iniciar el daemon.
-- Escuchar eventos `KeyPress` en el root window.
-- Al detectar un `KeyPress` que coincida con un atajo registrado, invocar el callback correspondiente.
-- Desregistrar todos los atajos (`XUngrabKey`) al apagar el daemon.
+- Escuchar pulsaciones globales y normalizar modificadores/teclas.
+- Al detectar una combinación registrada, encolar el callback en el daemon.
+- Detener los listeners al apagar el daemon.
 
 ---
 
@@ -277,9 +275,9 @@ Responsabilidades:
 
 Gestiona la presentación del menú de selección de layouts (invocado por Super+Z).
 
-En v1 implementa el menú mediante Rofi con un tema custom. La interfaz del módulo es independiente de Rofi: recibe una lista de `LayoutTemplate` y devuelve el template seleccionado y la zona seleccionada, o `None` si el flujo fue cancelado.
-
-Internamente lanza Rofi como subproceso, captura su salida por stdout, y parsea la selección.
+Implementa un `Toplevel` Tkinter en dos pasos: primero selecciona el layout y
+después la zona. Admite flechas/Enter y la secuencia numérica `layout`, `zona`;
+los callbacks viajan por `UIManager` con un `flow_id` que descarta eventos atrasados.
 
 ---
 
@@ -289,7 +287,9 @@ Gestiona la presentación del menú de sugerencias de ventanas dentro de una zon
 
 Recibe la lista congelada de ventanas elegibles (ya ordenada por MRU desde `State`), la zona (un `Rect` en coordenadas absolutas de pantalla), y las teclas de acceso rápido asignadas desde `config.py`.
 
-Lanza Rofi posicionado dentro de la zona vacía con las teclas de acceso rápido visibles junto al nombre de cada ventana. Devuelve el `window_id` seleccionado o `None` si fue cancelado.
+Muestra un `Listbox` Tkinter desplazable dentro de la zona vacía. Las primeras
+diez ventanas tienen quickkey; las restantes permanecen accesibles con flechas,
+Enter y auto-scroll. Devuelve el `window_id` seleccionado o se cancela con Esc.
 
 ---
 
@@ -463,19 +463,20 @@ Todo error en una operación de acoplamiento debe preservar el estado previo com
 |---|---|---|
 | Ventana desaparecida entre consulta y operación | `move_resize_window` encuentra `BadWindow` | El backend retorna `False`; SnapFlow revierte físicamente todas las ventanas de la transacción y restaura un snapshot de State. El backend nunca modifica State ni GroupManager |
 | `Esc`/`FocusOut` atrasado | El `flow_id` no coincide con el flujo activo | Ignorar el callback; nunca cancelar ni seleccionar sobre un menú posterior |
-| Rofi no encontrado en el sistema | `FileNotFoundError` al hacer `subprocess.run` | Loguear error crítico, emitir notificación al usuario via `notifier.py`, abortar flujo completo sin modificar ninguna ventana |
+| Error al mostrar UI Tkinter | excepción al procesar `show_menu`/`show_snap_assist` | `UIManager` envía `ui_command_failed`; `SnapFlow` cancela o revierte la transacción completa |
 | Backend WM no disponible | `Display()` lanza `error.DisplayConnectionError` | Terminar el daemon con mensaje de error claro en stderr. Sin servidor X no hay nada que hacer |
 | ConfigureNotify en ventana ya destruida | Race condition entre DestroyNotify y ConfigureNotify | Verificar existencia del wid en `State.snapped_windows` antes de procesar; si no existe, ignorar silenciosamente |
 | Error en cálculo de zona (división por cero en work area vacío) | Monitor con work area de 0px de alto | Loguear warning, abortar flujo, no modificar ninguna ventana |
 
 ### 6.3 Logging
 
-El daemon escribe a un archivo de log en `~/.local/share/snapassist/daemon.log` con rotación diaria. Niveles usados:
+El daemon escribe actividad en `~/.local/share/snapassist/daemon.log` y errores
+con traceback en `errors.log`, con rotación por tamaño. Niveles usados:
 
 - `DEBUG`: cada evento X11 recibido, cada llamada a `move_resize_window`.
 - `INFO`: invocaciones de atajos, creación y disolución de grupos, acoplamientos completados.
 - `WARNING`: casos borde no fatales (ventana con tamaño mínimo, ConfigureNotify ignorado).
-- `ERROR`: operaciones fallidas por errores X11, Rofi no encontrado, referencias inválidas.
+- `ERROR`: operaciones fallidas por errores X11, UI o referencias inválidas.
 - `CRITICAL`: condiciones que impiden el funcionamiento del daemon (sin servidor X, sin work area).
 
 ---
@@ -495,13 +496,14 @@ Las operaciones X11 utilizadas y sus equivalentes conceptuales:
 | Mover y redimensionar | `XMoveResizeWindow` + `_NET_MOVERESIZE_WINDOW` | Protocolo específico del compositor (no estandarizado aún) |
 | Tipo de ventana | `_NET_WM_WINDOW_TYPE` | Roles de superficie xdg-shell |
 | Jerarquía modal | `WM_TRANSIENT_FOR` | `xdg_popup` parent / `xdg_toplevel set_parent` |
-| Captura global de teclado | `XGrabKey` sobre root window | Sin estándar; requiere extensión del compositor o `wlr-input-inhibit` |
+| Captura global de teclado | `pynput`/XRecord | Sin estándar; requiere extensión del compositor o `wlr-input-inhibit` |
 | Work area | `_NET_WORKAREA` | `xdg-output-unstable-v1` + geometría de paneles por compositor |
 | Eventos de ventana | `SubstructureNotifyMask` sobre root | Listeners del protocolo foreign-toplevel |
 
 ### 7.2 El problema central de Wayland
 
-Wayland no tiene un equivalente de `XGrabKey` que funcione de forma universal. La captura global de atajos de teclado en Wayland requiere uno de los siguientes mecanismos, ninguno estandarizado entre compositores:
+Wayland no tiene una captura global de atajos que funcione de forma universal.
+Requiere uno de los siguientes mecanismos, ninguno estandarizado entre compositores:
 
 - **wlr-input-inhibit-unstable-v1**: solo wlroots (Hyprland, Sway).
 - **KDE Global Shortcuts (D-Bus)**: solo KWin/Plasma.
@@ -574,11 +576,11 @@ else:
 │  └──────────────┬───────────────────────────────────────────────┘   │
 │                 │                                                    │
 └─────────────────┼────────────────────────────────────────────────── ┘
-                  │ subprocesos
+                  │ UI y notificaciones
                   ▼
         ┌──────────────────┐
-        │  Rofi (externo)  │
-        │  tkinter overlay │
+        │  Tkinter (hilo)  │
+        │  overlay / menús │
         │  notify-send     │
         └──────────────────┘
 ```
@@ -591,7 +593,7 @@ else:
 
 | Librería | Versión mínima | Uso |
 |---|---|---|
-| `python-xlib` | 0.33 | Protocolo X11: eventos, átomos, XGrabKey, XMoveResizeWindow |
+| `python-xlib` | 0.33 | Protocolo X11: eventos, átomos EWMH y `_NET_MOVERESIZE_WINDOW` |
 | `ewmh` | 0.1.6 | Wrapper de átomos EWMH sobre python-xlib |
 | `python-xlib` incluye `Xlib.display` | — | Conexión al servidor X |
 
@@ -599,7 +601,6 @@ else:
 
 | Herramienta | Uso |
 |---|---|
-| `rofi` | Menú de layouts y Snap Assist |
 | `notify-send` (libnotify) | Notificaciones no intrusivas |
 | `python3` ≥ 3.11 | Runtime del daemon |
 

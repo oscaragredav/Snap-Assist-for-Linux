@@ -56,6 +56,7 @@ class Daemon:
         self._drag_starts = {}
         self._drag_distances = {}
         self._gesture_modes = {}
+        self._gesture_geometries = {}
         monitor_loader = getattr(self._wm, "get_monitors", None)
         self._monitors = list(monitor_loader() if monitor_loader else [])
 
@@ -177,6 +178,7 @@ class Daemon:
                 self._drag_starts.pop(wid, None)
                 self._drag_distances.pop(wid, None)
                 self._gesture_modes.pop(wid, None)
+                self._gesture_geometries.pop(wid, None)
                 if self._snap_flow:
                     self._snap_flow.on_window_destroyed(wid)
 
@@ -214,6 +216,7 @@ class Daemon:
                 self._drag_starts.pop(wid, None)
                 self._drag_distances.pop(wid, None)
                 self._gesture_modes.pop(wid, None)
+                self._gesture_geometries.pop(wid, None)
 
     def _safe_dispatch_event(self, event) -> bool:
         """Aísla cada evento: uno defectuoso no detiene los siguientes."""
@@ -284,32 +287,21 @@ class Daemon:
         wid = self._extract_wid(event)
         if not wid or not self._state.is_snapped(wid):
             return
-        self._drag_starts[wid] = (getattr(event, "root_x", 0), getattr(event, "root_y", 0))
-        self._drag_distances[wid] = 0.0
-        self._gesture_modes[wid] = "drag"
+        self._start_pointer_gesture(
+            wid, getattr(event, "root_x", 0), getattr(event, "root_y", 0), "drag"
+        )
 
     def _handle_motion_notify(self, event) -> None:
         wid = self._extract_wid(event)
         if not wid or wid not in self._drag_starts or not self._state.is_snapped(wid):
             return
 
-        previous_x, previous_y = self._drag_starts[wid]
-        current_x = getattr(event, "root_x", previous_x)
-        current_y = getattr(event, "root_y", previous_y)
-        self._drag_distances[wid] += math.hypot(current_x - previous_x, current_y - previous_y)
-        self._drag_starts[wid] = (current_x, current_y)
-
-        from snapassist.config import DRAG_THRESHOLD_PX
-        if self._drag_distances[wid] >= DRAG_THRESHOLD_PX:
-            logger.info("Drag intencional detectado en 0x%x (%.1f px)", wid, self._drag_distances[wid])
-            self._drag_starts.pop(wid, None)
-            self._drag_distances.pop(wid, None)
-            if self._snap_flow:
-                mode = getattr(self, "_gesture_modes", {}).pop(wid, "drag")
-                if mode == "resize":
-                    self._snap_flow.on_window_resized(wid)
-                else:
-                    self._snap_flow.on_window_dragged(wid)
+        start_x, start_y = self._drag_starts[wid]
+        self._handle_drag_motion(
+            wid,
+            getattr(event, "root_x", start_x),
+            getattr(event, "root_y", start_y),
+        )
 
     def _consume_own_resize(self, wid: int, event=None) -> bool:
         """Consume una notificación propia si el backend puede identificarla."""
@@ -331,9 +323,7 @@ class Daemon:
             if active_wid and self._state.is_snapped(active_wid):
                 mode = self._classify_pointer_gesture(active_wid, x, y)
                 if mode:
-                    self._drag_starts[active_wid] = (x, y)
-                    self._drag_distances[active_wid] = 0.0
-                    self._gesture_modes[active_wid] = mode
+                    self._start_pointer_gesture(active_wid, x, y, mode)
         elif event_name == "pointer_move":
             for wid in list(self._drag_starts):
                 self._handle_drag_motion(wid, x, y)
@@ -341,22 +331,47 @@ class Daemon:
             self._drag_starts.clear()
             self._drag_distances.clear()
             self._gesture_modes.clear()
+            self._gesture_geometries.clear()
+
+    def _start_pointer_gesture(self, wid: int, x: int, y: int, mode: str) -> None:
+        """Registra el origen y la geometría antes de un posible gesto."""
+        self._drag_starts[wid] = (x, y)
+        self._drag_distances[wid] = 0.0
+        self._gesture_modes[wid] = mode
+        if not hasattr(self, "_gesture_geometries"):
+            self._gesture_geometries = {}
+        self._gesture_geometries[wid] = self._wm.get_window_geometry(wid).rect
 
     def _handle_drag_motion(self, wid: int, current_x: int, current_y: int) -> None:
         """Acumula el movimiento y desacopla al superar el umbral."""
         if wid not in self._drag_starts or not self._state.is_snapped(wid):
             return
-        previous_x, previous_y = self._drag_starts[wid]
-        self._drag_distances[wid] += math.hypot(current_x - previous_x, current_y - previous_y)
-        self._drag_starts[wid] = (current_x, current_y)
+        origin_x, origin_y = self._drag_starts[wid]
+        self._drag_distances[wid] = math.hypot(
+            current_x - origin_x, current_y - origin_y
+        )
 
         from snapassist.config import DRAG_THRESHOLD_PX
         if self._drag_distances[wid] >= DRAG_THRESHOLD_PX:
+            initial_rect = self._gesture_geometries.get(wid)
+            current_rect = self._wm.get_window_geometry(wid).rect
+            mode = self._gesture_modes.get(wid, "drag")
+            moved = initial_rect and (
+                current_rect.x != initial_rect.x or current_rect.y != initial_rect.y
+            )
+            resized = initial_rect and (
+                current_rect.w != initial_rect.w or current_rect.h != initial_rect.h
+            )
+            # Un drag dentro de contenido, toolbar o scrollbar no cambia la
+            # geometría exterior y nunca debe desacoplar la ventana.
+            if not ((mode == "drag" and moved) or (mode == "resize" and resized)):
+                return
             logger.info("Drag intencional detectado en 0x%x (%.1f px)", wid, self._drag_distances[wid])
             self._drag_starts.pop(wid, None)
             self._drag_distances.pop(wid, None)
+            self._gesture_geometries.pop(wid, None)
             if self._snap_flow:
-                mode = getattr(self, "_gesture_modes", {}).pop(wid, "drag")
+                mode = self._gesture_modes.pop(wid, "drag")
                 if mode == "resize":
                     self._snap_flow.on_window_resized(wid)
                 else:
@@ -366,7 +381,6 @@ class Daemon:
         """Distingue resize de borde, drag de título y clicks de contenido."""
         rect = self._wm.get_window_geometry(wid).rect
         edge_margin = 16
-        titlebar_height = 60
         within_x = rect.x - edge_margin <= x <= rect.right + edge_margin
         within_y = rect.y - edge_margin <= y <= rect.bottom + edge_margin
         near_edge = (
@@ -384,10 +398,9 @@ class Daemon:
         )
         if near_edge:
             return "resize"
-        if (
-            rect.x <= x <= rect.right
-            and rect.y <= y <= rect.y + titlebar_height
-        ):
+        if rect.x <= x <= rect.right and rect.y <= y <= rect.bottom:
+            # La confirmación posterior depende de que la ventana se mueva de
+            # verdad; así no se confunde contenido con una barra de título.
             return "drag"
         return None
 
@@ -432,4 +445,11 @@ class Daemon:
         elif event == "snap_assist_cancelled":
             self._snap_flow.cancel_snap_assist(
                 msg.get("reason", "escape"), msg.get("flow_id")
+            )
+
+        elif event == "ui_command_failed":
+            self._snap_flow.on_ui_command_failed(
+                msg.get("action", "unknown"),
+                msg.get("error", "error desconocido"),
+                msg.get("flow_id"),
             )
