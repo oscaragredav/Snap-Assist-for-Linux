@@ -53,6 +53,9 @@ class MockBackend:
     def get_window_title(self, wid):
         return next(info.title for info in self.candidates if info.window_id == wid)
 
+    def get_window_app_name(self, wid):
+        return "Aplicación principal" if wid == 1 else ""
+
     def get_window_geometry(self, wid):
         return WindowGeometry(Rect(2000 if wid == 2 else 100, 100, 800, 600))
 
@@ -98,6 +101,23 @@ def test_eligible_list_is_frozen_after_first_snap():
     assert [info.window_id for info in flow._eligible_windows] == [2, 3]
     assert [info.window_id for info in command["eligible_windows"]] == [2, 3]
 
+
+def test_layout_menu_identifies_the_active_application():
+    flow, _backend, _state, ui = make_flow()
+    flow.trigger()
+    assert ui.commands[-1]["active_window_name"] == (
+        "Aplicación principal - Principal"
+    )
+
+
+def test_window_display_name_includes_application_and_title():
+    assert WindowInfo(2, "Wikipedia", app_name="Mozilla Firefox").display_name == (
+        "Mozilla Firefox - Wikipedia"
+    )
+    assert WindowInfo(3, "Descargas", app_name="Archivos").display_name == (
+        "Archivos - Descargas"
+    )
+    assert WindowInfo(4, "Terminal", app_name="Terminal").display_name == "Terminal"
 
 def test_empty_zone_assignment_for_every_template():
     for template in LAYOUT_TEMPLATES:
@@ -182,6 +202,8 @@ def test_zone_names_are_spatially_descriptive():
 def run_all_tests():
     tests = [
         test_eligible_list_is_frozen_after_first_snap,
+        test_layout_menu_identifies_the_active_application,
+        test_window_display_name_includes_application_and_title,
         test_empty_zone_assignment_for_every_template,
         test_selection_moves_workspace_and_uses_origin_monitor_zones,
         test_cancel_preserves_windows_already_snapped,

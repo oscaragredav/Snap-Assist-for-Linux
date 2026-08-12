@@ -103,6 +103,16 @@ class WindowInfo:
     title: str = ""
     on_other_workspace: bool = False
     quickkey: Optional[str] = None
+    app_name: str = ""
+
+    @property
+    def display_name(self) -> str:
+        """Nombre reconocible: aplicación seguida del título de la ventana."""
+        app = self.app_name.strip()
+        title = self.title.strip()
+        if app and title and title.casefold() != app.casefold():
+            return f"{app} - {title}"
+        return app or title or f"Ventana 0x{self.window_id:x}"
 
 
 class WindowType(Enum):

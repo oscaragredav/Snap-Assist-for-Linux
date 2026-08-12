@@ -113,7 +113,7 @@ class SnapAssistMenu:
 
         for info in self._windows:
             key = (info.quickkey or "→").upper()
-            text = f"[{key}]  {info.title or f'Ventana 0x{info.window_id:x}'}"
+            text = f"[{key}]  {info.display_name}"
             self._listbox.insert("end", text)
 
         for widget in (self._window, self._listbox):

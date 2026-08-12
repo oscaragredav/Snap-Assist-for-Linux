@@ -91,6 +91,7 @@ class State:
                 window_id=info.window_id,
                 title=info.title,
                 on_other_workspace=info.on_other_workspace,
+                app_name=info.app_name,
                 quickkey=(
                     QUICKKEY_SEQUENCE[index]
                     if index < len(QUICKKEY_SEQUENCE)

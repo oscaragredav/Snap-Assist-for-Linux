@@ -196,6 +196,7 @@ class X11Backend(WindowManager):
                 window_id=wid,
                 title=self.get_window_title(wid),
                 on_other_workspace=self._is_on_other_workspace(wid),
+                app_name=self.get_window_app_name(wid),
             )
             for wid in self.get_all_windows()
         ]
@@ -359,6 +360,31 @@ class X11Backend(WindowManager):
             logger.debug("Ventana 0x%x desaparecida al leer título", wid)
         except Exception as e:
             logger.error("Error leyendo título de 0x%x: %s", wid, e)
+        return ""
+
+    def get_window_app_name(self, wid: int) -> str:
+        """Obtiene el nombre de aplicación desde WM_CLASS y lo hace legible."""
+        try:
+            window = self._display.create_resource_object("window", wid)
+            wm_class = window.get_wm_class()
+            if not wm_class:
+                return ""
+            raw_name = str(wm_class[-1] or wm_class[0]).strip()
+            known_names = {
+                "firefox": "Mozilla Firefox",
+                "navigator": "Mozilla Firefox",
+                "nautilus": "Archivos",
+                "org.gnome.nautilus": "Archivos",
+                "gnome-terminal-server": "Terminal",
+            }
+            key = raw_name.casefold()
+            if key in known_names:
+                return known_names[key]
+            return raw_name.replace("-", " ").replace("_", " ").title()
+        except (BadWindow, BadDrawable):
+            logger.debug("Ventana 0x%x desaparecida al leer WM_CLASS", wid)
+        except Exception as e:
+            logger.debug("No se pudo leer WM_CLASS de 0x%x: %s", wid, e)
         return ""
 
     def get_window_type(self, wid: int) -> WindowType:

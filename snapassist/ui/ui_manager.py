@@ -153,7 +153,13 @@ class UIManager:
                 monitor_rect = cmd.get("monitor_rect")
                 absolute_rects = cmd.get("absolute_rects")
                 disabled_layouts = cmd.get("disabled_layouts")
-                self._layout_menu.show(layouts, absolute_rects, monitor_rect, disabled_layouts)
+                self._layout_menu.show(
+                    layouts,
+                    absolute_rects,
+                    monitor_rect,
+                    disabled_layouts,
+                    cmd.get("active_window_name", ""),
+                )
                 
             elif action == "hide_menu":
                 if (

@@ -59,7 +59,7 @@ class LayoutMenu:
         # Si la ventana pierde el foco (ej. clic en otro lado o Alt-Tab), se cancela
         self._window.bind("<FocusOut>", self._focus_lost)
 
-    def show(self, templates: List, absolute_rects: List[List], monitor_rect, disabled_layouts: List[bool] = None) -> None:
+    def show(self, templates: List, absolute_rects: List[List], monitor_rect, disabled_layouts: List[bool] = None, active_window_name: str = "") -> None:
         """
         templates: lista de LayoutTemplate
         absolute_rects: rectángulos absolutos calculados para las zonas de cada layout
@@ -70,6 +70,7 @@ class LayoutMenu:
         self._absolute_rects = absolute_rects
         self._monitor_rect = monitor_rect
         self._disabled_layouts = disabled_layouts or [False] * len(templates)
+        self._active_window_name = active_window_name
         
         # Encontrar el primer layout no deshabilitado
         self._active_layout_idx = 0
@@ -92,7 +93,7 @@ class LayoutMenu:
         
         rows = (len(templates) + self._grid_columns - 1) // self._grid_columns
         window_width = min(monitor_rect.w - 40, self._grid_columns * 150 + 60)
-        window_height = min(monitor_rect.h - 40, rows * 120 + 150)
+        window_height = min(monitor_rect.h - 40, rows * 120 + 185)
         
         # Centrar el menú dentro del monitor actual
         x = monitor_rect.x + (monitor_rect.w - window_width) // 2
@@ -136,6 +137,17 @@ class LayoutMenu:
             font=("Inter", 14, "bold")
         )
         self._title_label.pack(pady=(0, 12))
+
+        if self._active_window_name:
+            active_label = tk.Label(
+                main_frame,
+                text=f"Organizando: {self._active_window_name}",
+                fg="#93c5fd",
+                bg="#2c3e50",
+                font=("Inter", 11, "bold"),
+                wraplength=760,
+            )
+            active_label.pack(pady=(0, 12))
         
         grid_frame = tk.Frame(main_frame, bg="#2c3e50")
         grid_frame.pack()

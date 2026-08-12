@@ -120,6 +120,12 @@ class SnapFlow:
             len(layout.zones) > snappable_count
             for layout in LAYOUT_TEMPLATES
         ]
+        app_name_reader = getattr(self._wm, "get_window_app_name", None)
+        active_info = WindowInfo(
+            active_wid,
+            self._wm.get_window_title(active_wid),
+            app_name=app_name_reader(active_wid) if app_name_reader else "",
+        )
             
         self._ui_manager.send_command({
             "action": "show_menu",
@@ -127,7 +133,8 @@ class SnapFlow:
             "layouts": LAYOUT_TEMPLATES,
             "absolute_rects": self._absolute_rects,
             "monitor_rect": self._monitor_rect,
-            "disabled_layouts": disabled_layouts
+            "disabled_layouts": disabled_layouts,
+            "active_window_name": active_info.display_name,
         })
 
     def cancel(self, flow_id: Optional[int] = None) -> None:
@@ -295,8 +302,13 @@ class SnapFlow:
         if loader:
             candidates = loader()
         else:
+            app_name_reader = getattr(self._wm, "get_window_app_name", None)
             candidates = [
-                WindowInfo(wid, self._wm.get_window_title(wid))
+                WindowInfo(
+                    wid,
+                    self._wm.get_window_title(wid),
+                    app_name=app_name_reader(wid) if app_name_reader else "",
+                )
                 for wid in self._wm.get_all_windows()
             ]
         return list(self._state.get_sorted_eligible(candidates, exclude_wid))

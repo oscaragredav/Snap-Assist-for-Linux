@@ -63,6 +63,10 @@ class WindowManager(ABC):
         """
         ...
 
+    def get_window_app_name(self, wid: int) -> str:
+        """Retorna el nombre reconocible de la aplicación, si está disponible."""
+        return ""
+
     @abstractmethod
     def get_window_type(self, wid: int) -> WindowType:
         """

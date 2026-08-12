@@ -65,7 +65,7 @@ def test_installer_is_idempotent_in_an_isolated_tree():
         assert (installed / "snapassist" / "main.py").read_bytes() == first_main
 
 
-def test_readme_documents_operations_and_customization():
+def test_readme_documents_user_operations():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     for required in (
         "bash install.sh",
@@ -73,9 +73,9 @@ def test_readme_documents_operations_and_customization():
         "Super+Z",
         "Super+Alt+Tab",
         "Super+/",
-        "LAYOUT_TEMPLATES",
         "journalctl --user -u snapassist",
-        "daemon.log",
+        "Desinstalación",
+        "Privacidad",
     ):
         assert required in readme
 
@@ -86,7 +86,7 @@ def run_all_tests():
         test_dependencies_are_exactly_pinned,
         test_service_has_phase10_lifecycle_contract,
         test_installer_is_idempotent_in_an_isolated_tree,
-        test_readme_documents_operations_and_customization,
+        test_readme_documents_user_operations,
     ]
     for test in tests:
         test()
