@@ -9,6 +9,8 @@ eventos estructurales (Map/Unmap/Destroy/Configure) para fases posteriores.
 
 import logging
 import math
+import os
+import queue
 from typing import Optional
 
 from Xlib import X
@@ -18,6 +20,22 @@ from snapassist.core.state import State
 from snapassist.wm.backend import WindowManager
 
 logger = logging.getLogger(__name__)
+
+
+class WakeableQueue(queue.Queue):
+    """Queue que puede despertar el `select` consumidor al recibir trabajo."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._wakeup = None
+
+    def set_wakeup(self, callback) -> None:
+        self._wakeup = callback
+
+    def put(self, item, block=True, timeout=None) -> None:
+        super().put(item, block=block, timeout=timeout)
+        if self._wakeup:
+            self._wakeup()
 
 
 class Daemon:
@@ -50,6 +68,17 @@ class Daemon:
         
         self._running = False
         self._display = wm_backend.get_display()
+        self._wake_read_fd, self._wake_write_fd = os.pipe()
+        os.set_blocking(self._wake_read_fd, False)
+        os.set_blocking(self._wake_write_fd, False)
+        for callback_queue in (
+            self._ui_callback_queue,
+            self._pointer_event_queue,
+            self._control_callback_queue,
+        ):
+            setter = getattr(callback_queue, "set_wakeup", None)
+            if setter:
+                setter(self._wake)
 
         # Átomo de _NET_ACTIVE_WINDOW para comparar en PropertyNotify
         self._atom_active_window = self._display.intern_atom("_NET_ACTIVE_WINDOW")
@@ -57,6 +86,7 @@ class Daemon:
         self._drag_distances = {}
         self._gesture_modes = {}
         self._gesture_geometries = {}
+        self._pointer_tracking_enabled = False
         monitor_loader = getattr(self._wm, "get_monitors", None)
         self._monitors = list(monitor_loader() if monitor_loader else [])
 
@@ -77,14 +107,18 @@ class Daemon:
 
         while self._running:
             try:
-                # Usamos select con un timeout corto (50 ms) para no bloquear
-                # indefinidamente y permitir que el flag _running se evalúe.
-                readable, _, _ = select.select([self._display.fileno()], [], [], 0.05)
+                # Sin polling: X11 o una WakeableQueue despiertan el proceso.
+                readable, _, _ = select.select(
+                    [self._display.fileno(), self._wake_read_fd], [], []
+                )
 
                 if not self._running:
                     break
                 
-                if readable:
+                if self._wake_read_fd in readable:
+                    self._drain_wakeup()
+
+                if self._display.fileno() in readable:
                     # pending_events() retorna el número de eventos encolados
                     while self._display.pending_events():
                         event = self._display.next_event()
@@ -119,6 +153,13 @@ class Daemon:
                     except queue.Empty:
                         pass
 
+                pointer_needed = bool(self._state.snapped_windows)
+                if pointer_needed != self._pointer_tracking_enabled:
+                    tracker = getattr(self._hotkeys, "set_pointer_tracking", None)
+                    if tracker:
+                        tracker(pointer_needed)
+                    self._pointer_tracking_enabled = pointer_needed
+
             except KeyboardInterrupt:
                 logger.info("Event loop interrumpido por KeyboardInterrupt.")
                 break
@@ -135,6 +176,19 @@ class Daemon:
             logger.error("Error deteniendo listeners: %s", e, exc_info=True)
         logger.info("Event loop finalizado.")
 
+    def _wake(self) -> None:
+        try:
+            os.write(self._wake_write_fd, b"\0")
+        except (BlockingIOError, OSError):
+            pass
+
+    def _drain_wakeup(self) -> None:
+        try:
+            while os.read(self._wake_read_fd, 4096):
+                pass
+        except (BlockingIOError, OSError):
+            pass
+
     def shutdown(self) -> None:
         """
         Solicita detener el event loop. La liberación de listeners y UI se
@@ -145,6 +199,7 @@ class Daemon:
             return
         logger.info("Apagando daemon...")
         self._running = False
+        self._wake()
 
     def _dispatch_event(self, event) -> None:
         """

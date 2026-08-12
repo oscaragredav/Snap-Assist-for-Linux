@@ -621,7 +621,9 @@ Description=SnapAssist Window Manager Daemon
 After=graphical-session.target
 
 [Service]
-ExecStart=/usr/bin/python3 /opt/snapassist/main.py
+WorkingDirectory=%h/.local/share/snapassist
+ExecStart=%h/.local/share/snapassist/venv/bin/python -m snapassist.main
+Environment=XDG_SESSION_TYPE=x11
 Restart=on-failure
 RestartSec=3
 Environment=DISPLAY=:0
@@ -632,5 +634,6 @@ WantedBy=graphical-session.target
 
 Al arrancar, el daemon: conecta al servidor X → registra eventos sobre el root window → registra atajos globales → entra en el event loop bloqueante.
 
-Al recibir SIGTERM o SIGINT: desregistra todos los atajos (`XUngrabKey`) → cierra la conexión X → termina limpiamente sin dejar ninguna ventana en estado inconsistente.
+Al recibir SIGTERM o SIGINT: detiene los listeners de pynput → cierra la UI y
+la conexión X → termina limpiamente sin dejar ninguna ventana en estado inconsistente.
 ```

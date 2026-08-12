@@ -25,7 +25,7 @@ from snapassist.config import (
     ERROR_LOG_FILE, LOG_DIR, LOG_FILE, LOG_MAX_BYTES, LOG_BACKUP_COUNT,
     HOTKEY_HELP, HOTKEY_LAYOUT_MENU, HOTKEY_SNAP_GROUPS, LAYOUT_TEMPLATES,
 )
-from snapassist.core.daemon import Daemon
+from snapassist.core.daemon import Daemon, WakeableQueue
 from snapassist.core.hotkeys import HotkeyManager
 from snapassist.core.state import State
 from snapassist.layout.engine import LayoutEngine
@@ -255,8 +255,6 @@ def build_help_message(wm_backend, state: State, group_manager, active_wid) -> s
 
 from snapassist.ui.ui_manager import UIManager
 from snapassist.snap.snap_flow import SnapFlow
-import queue
-
 def main() -> None:
     """Punto de entrada principal del daemon SnapAssist."""
     setup_logging()
@@ -276,8 +274,8 @@ def main() -> None:
     snap_engine = SnapEngine(wm_backend, state, layout_engine)
     group_manager = GroupManager(state, wm_backend)
 
-    pointer_event_queue = queue.Queue()
-    control_callback_queue = queue.Queue()
+    pointer_event_queue = WakeableQueue()
+    control_callback_queue = WakeableQueue()
     hotkey_manager = HotkeyManager(
         display_obj=wm_backend.get_display(),
         root_window=wm_backend.root,
@@ -286,7 +284,7 @@ def main() -> None:
     )
     
     # 5. Inicializar UI en hilo separado
-    ui_callback_queue = queue.Queue()
+    ui_callback_queue = WakeableQueue()
     ui_manager = UIManager(ui_callback_queue)
     ui_manager.start()
     

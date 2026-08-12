@@ -117,7 +117,13 @@ class HotkeyManager:
             self._listener.start()
             logger.info("Listener de teclado iniciado en segundo plano.")
 
-        if self._pointer_event_queue is not None and self._pointer_listener is None:
+        # El puntero se activa bajo demanda cuando State contiene ventanas
+        # acopladas. Mantener XRecord escuchando todos los movimientos durante
+        # el idle consume CPU sin que exista nada que desacoplar.
+
+    def set_pointer_tracking(self, enabled: bool) -> None:
+        """Activa el listener global sólo mientras hay ventanas acopladas."""
+        if enabled and self._pointer_event_queue is not None and self._pointer_listener is None:
             from pynput import mouse
             self._pointer_listener = mouse.Listener(
                 on_click=self._on_pointer_click,
@@ -125,6 +131,14 @@ class HotkeyManager:
             )
             self._pointer_listener.start()
             logger.info("Listener global de puntero iniciado en segundo plano.")
+        elif not enabled and self._pointer_listener is not None:
+            try:
+                self._pointer_listener.stop()
+            except Exception as e:
+                logger.warning("No se pudo detener el listener de puntero: %s", e)
+            self._pointer_listener = None
+            self._pointer_pressed = False
+            logger.info("Listener global de puntero detenido (sin ventanas acopladas).")
 
     def unregister_all(self) -> None:
         """

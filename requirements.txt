@@ -1,5 +1,6 @@
 # SnapAssist — Dependencias Python
 # Instalar con: pip install -r requirements.txt
 
-python-xlib>=0.33
-pynput>=1.8.2
+python-xlib==0.33
+pynput==1.8.2
+ewmh==0.1.6

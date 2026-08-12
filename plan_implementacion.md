@@ -480,6 +480,14 @@ Simular un fallo de `BadWindow` en la tercera ventana de un layout de tres (cerr
 
 ## Fase 10 — Configurabilidad y Empaquetado
 
+**Estado:** Implementada y validada (2026-08-11).
+
+**Evidencia:** instalación limpia y reinstalación idempotente en árbol aislado;
+suite completa de 11 archivos aprobada; arranque → SIGINT → segundo arranque
+sin atajos fantasma; medición idle de 60 s: CPU 0.000%, RSS 30.28 MB. El cierre
+de sesión/login queda como validación manual porque interrumpiría la sesión del
+usuario, pero la unidad se habilita contra `graphical-session.target`.
+
 ### Objetivo
 Hacer el sistema instalable como servicio de usuario, documentar la configuración, y asegurar que el daemon arranca automáticamente con la sesión X11.
 

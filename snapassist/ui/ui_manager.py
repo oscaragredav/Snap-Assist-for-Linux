@@ -65,6 +65,14 @@ class UIManager:
     def send_command(self, cmd: Dict[str, Any]) -> None:
         """Envia un comando a la UI. (Thread-safe)"""
         self._cmd_queue.put(cmd)
+        root = self._root
+        if root is not None and self._running and hasattr(root, "event_generate"):
+            try:
+                root.event_generate("<<SnapAssistCommand>>", when="tail")
+            except (tk.TclError, RuntimeError):
+                # La UI puede estar entre creación y mainloop; el watchdog
+                # programado en `_run_mainloop` recogerá el comando.
+                pass
 
     def _run_mainloop(self) -> None:
         """Punto de entrada del hilo de UI."""
@@ -91,8 +99,10 @@ class UIManager:
             on_selection=self._on_snap_assist_selection,
             on_cancel=self._on_snap_assist_cancel,
         )
-        
-        self._poll_queue()
+        self._root.bind("<<SnapAssistCommand>>", self._on_command_event)
+        # Recoge una posible orden enviada entre `start()` y la creación del
+        # root. Después, cada productor despierta Tk con event_generate.
+        self._root.after_idle(self._drain_commands)
         
         try:
             self._root.mainloop()
@@ -107,8 +117,11 @@ class UIManager:
                 pass
         logger.info("Hilo de UI finalizado.")
 
-    def _poll_queue(self) -> None:
-        """Procesa comandos de la cola de forma periódica."""
+    def _on_command_event(self, _event=None) -> None:
+        """Procesa comandos al recibir la notificación del productor."""
+        self._drain_commands()
+
+    def _drain_commands(self) -> None:
         if not self._running or not self._root:
             return
 
@@ -121,9 +134,9 @@ class UIManager:
         except queue.Empty:
             pass
 
-        # Repetir polling a ~60 FPS
-        if self._running:
-            self._root.after(16, self._poll_queue)
+    def _poll_queue(self) -> None:
+        """Alias conservado para pruebas y compatibilidad interna."""
+        self._drain_commands()
 
     def _process_command(self, cmd: Dict[str, Any]) -> None:
         """Ejecuta el comando recibido en el contexto del hilo UI."""

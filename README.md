@@ -7,10 +7,9 @@ sesión X11; Wayland aún no está soportado.
 
 ## Estado del proyecto
 
-Las fases 1 a 9 del plan están implementadas. Las fases recientes cuentan con
-pruebas unitarias; su validación funcional requiere una sesión X11 real.
-
-La siguiente fase del plan será la 10: configurabilidad y empaquetado.
+Las fases 1 a 10 del plan están implementadas. SnapAssist puede ejecutarse en
+desarrollo o instalarse como servicio systemd del usuario. Las pruebas que
+interactúan con ventanas requieren una sesión X11 real.
 
 ## Funcionalidad disponible
 
@@ -47,10 +46,95 @@ las flechas y Enter, o con el número mostrado dentro de cada zona. Por ejemplo,
 
 ## Requisitos
 
-- Python 3.12 o superior.
+- Zorin OS, Ubuntu o distribución equivalente con systemd de usuario.
+- Python 3.11 o superior, con los módulos `venv` y `tkinter`.
 - Sesión gráfica X11.
 - Dependencias de Python en `requirements.txt`.
-- `tkinter` disponible en el sistema para el menú y los overlays.
+- `notify-send` recomendado para ayuda y avisos (`libnotify-bin` en Ubuntu).
+
+En Zorin/Ubuntu se pueden instalar los requisitos del sistema con:
+
+```bash
+sudo apt install python3 python3-venv python3-tk libnotify-bin
+```
+
+## Instalación como servicio de usuario
+
+SnapAssist sólo funciona actualmente en X11. En la pantalla de inicio de sesión
+elige una sesión con **Xorg/X11** si tu distribución inicia Wayland de forma
+predeterminada. Después, abre una terminal y ejecuta:
+
+```bash
+sudo apt update
+sudo apt install git python3 python3-venv python3-tk libnotify-bin
+git clone https://github.com/oscaragredav/Snap-Assist-for-Linux.git
+cd Snap-Assist-for-Linux
+bash install.sh
+```
+
+El instalador copia la aplicación a `~/.local/share/snapassist`, crea allí un
+entorno virtual aislado, instala las versiones fijadas en `requirements.txt`,
+instala `~/.config/systemd/user/snapassist.service` y habilita/reinicia el
+servicio. Es seguro volver a ejecutar `bash install.sh` para actualizar una
+instalación existente. Además, detecta el `DISPLAY` real de la sesión en vez de
+suponer que siempre es `:0`, espera hasta 30 segundos a que X11 esté listo y
+termina con un error visible si el servicio no logra arrancar.
+
+Una instalación correcta termina con `Estado: activo`. Pulsa `Super+Z` para
+abrir el selector de layouts. No hace falta ejecutar el programa manualmente ni
+mantener la terminal abierta; se iniciará con las siguientes sesiones gráficas.
+
+Comandos operativos útiles:
+
+```bash
+systemctl --user status snapassist
+systemctl --user restart snapassist
+systemctl --user stop snapassist
+journalctl --user -u snapassist -f
+tail -f ~/.local/share/snapassist/daemon.log
+tail -f ~/.local/share/snapassist/errors.log
+```
+
+El entorno gráfico detectado se guarda con permisos privados en
+`~/.config/snapassist/environment`. Si cambia el display o el archivo de
+autorización X11, basta con ejecutar de nuevo `bash install.sh` desde una
+terminal de la sesión gráfica.
+
+### Desinstalación
+
+```bash
+systemctl --user disable --now snapassist.service
+rm ~/.config/systemd/user/snapassist.service
+rm -r ~/.local/share/snapassist ~/.config/snapassist
+systemctl --user daemon-reload
+```
+
+## Atajos y configuración
+
+Todos los valores se encuentran al principio de
+`snapassist/config.py`. Tras modificarlos, reinstala con `bash install.sh`.
+
+| Acción | Valor predeterminado | Constante |
+|---|---|---|
+| Abrir layouts | `Super+Z` | `HOTKEY_LAYOUT_MENU` |
+| Traer Snap Group al frente | `Super+Alt+Tab` | `HOTKEY_SNAP_GROUPS` |
+| Mostrar ayuda y estado | `Super+/` | `HOTKEY_HELP` |
+| Quickkeys de sugerencias | `QWERTYUIOP` | `QUICKKEY_SEQUENCE` |
+| Umbral para desacoplar | 8 px | `DRAG_THRESHOLD_PX` |
+| Duración de animación | 200 ms | `SNAP_ANIMATION_MS` |
+| Opacidad del overlay | 0.35 | `OVERLAY_OPACITY` |
+
+Para agregar un layout, incorpora otro `LayoutTemplate` a
+`LAYOUT_TEMPLATES`. Cada `ZoneTemplate(x, y, w, h)` usa proporciones entre 0 y
+1 respecto del área útil. Las zonas deben cubrir el layout sin solaparse; por
+ejemplo, dos filas iguales son:
+
+```python
+LayoutTemplate("1 arriba + 1 abajo", [
+    ZoneTemplate(0.0, 0.0, 1.0, 0.5),
+    ZoneTemplate(0.0, 0.5, 1.0, 0.5),
+])
+```
 
 ## Uso durante el desarrollo
 
@@ -81,9 +165,19 @@ registra en vez de repetir redimensionamientos indefinidamente.
 venv/bin/python tests/run_all.py
 ```
 
-La puerta anterior ejecuta las fases 1–9, la cobertura del menú de Fase 4 y
+La puerta anterior ejecuta las fases 1–10, la cobertura del menú de Fase 4 y
 las regresiones de `QA_REPORT.md`. Las comprobaciones X11 reales de SSD y
 Terminal se realizan con ventanas temporales cerradas automáticamente.
+
+Para validar los límites de recursos de un daemon ya iniciado:
+
+```bash
+venv/bin/python tests/measure_idle.py "$(systemctl --user show -p MainPID --value snapassist)" --seconds 60
+```
+
+En la validación de Fase 10 del 2026-08-11 se midieron `0.000%` de CPU y
+`30.28 MB` de RSS durante 60 segundos sin interacción. El listener global del
+puntero se activa únicamente mientras existen ventanas acopladas.
 
 Los criterios funcionales y el orden completo de implementación se encuentran
 en [plan_implementacion.md](plan_implementacion.md). Los requisitos de
