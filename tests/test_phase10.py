@@ -27,16 +27,16 @@ def test_dependencies_are_exactly_pinned():
     assert pins == {"python-xlib==0.33", "pynput==1.8.2", "ewmh==0.1.6"}
 
 
-def test_service_has_phase10_lifecycle_contract():
+def test_service_has_lifecycle_contract():
     unit = (ROOT / "snapassist.service").read_text(encoding="utf-8")
     for required in (
         "After=graphical-session.target",
         "WantedBy=graphical-session.target",
         "Restart=on-failure",
         "RestartSec=3",
-        "EnvironmentFile=-%h/.config/snapassist/environment",
-        "ExecStartPre=%h/.local/share/snapassist/venv/bin/python -m snapassist.wait_for_x11",
-        "ExecStart=%h/.local/share/snapassist/venv/bin/python -m snapassist.main",
+        'EnvironmentFile=-"@ENV_FILE@"',
+        'ExecStartPre="@INSTALL_DIR@/venv/bin/python" -m snapassist.wait_for_x11',
+        'ExecStart="@INSTALL_DIR@/venv/bin/python" -m snapassist.main',
     ):
         assert required in unit
 
@@ -58,7 +58,10 @@ def test_installer_is_idempotent_in_an_isolated_tree():
         assert (installed / "snapassist" / "main.py").is_file()
         assert (installed / "snapassist" / "wait_for_x11.py").is_file()
         assert (installed / "requirements.txt").is_file()
-        assert unit.read_bytes() == (ROOT / "snapassist.service").read_bytes()
+        unit_text = unit.read_text(encoding="utf-8")
+        assert str(installed) in unit_text
+        assert str(base / "config" / "snapassist" / "environment") in unit_text
+        assert "@INSTALL_DIR@" not in unit_text
 
         first_main = (installed / "snapassist" / "main.py").read_bytes()
         subprocess.run(command, cwd=ROOT, env=env, check=True, capture_output=True)
@@ -84,7 +87,7 @@ def run_all_tests():
     tests = [
         test_pointer_listener_is_disabled_during_idle,
         test_dependencies_are_exactly_pinned,
-        test_service_has_phase10_lifecycle_contract,
+        test_service_has_lifecycle_contract,
         test_installer_is_idempotent_in_an_isolated_tree,
         test_readme_documents_user_operations,
     ]

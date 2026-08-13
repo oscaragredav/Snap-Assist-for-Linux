@@ -38,7 +38,7 @@ def parse_hotkey(hotkey_str: str) -> str:
     if len(key) > 1:
         # Para teclas especiales como "tab", "esc", pynput no usa <tab> en GlobalHotKeys
         # sino un formato específico, pero por ahora solo soportamos letras o teclas simples.
-        # En la Fase 2 solo necesitamos super+z. Si necesitamos otras, las mapearemos.
+        # Las combinaciones adicionales se normalizan en este mismo mapa.
         if key == "tab":
             key = "<tab>"
         elif key in ("esc", "escape"):

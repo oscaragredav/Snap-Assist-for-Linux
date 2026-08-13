@@ -63,7 +63,7 @@ class SnapFlow:
         """
         if self._is_active:
             logger.info("Super+Z presionado nuevamente. Cancelando menú.")
-            self.cancel()
+            self._cancel_current()
             return
             
         active_wid = self._wm.get_active_window()
@@ -137,10 +137,14 @@ class SnapFlow:
             "active_window_name": active_info.display_name,
         })
 
-    def cancel(self, flow_id: Optional[int] = None) -> None:
+    def cancel(self, flow_id: int) -> None:
         """Cancela el punto actual y conserva las ventanas ya acopladas."""
         if not self._accepts_callback(flow_id):
             return
+        self._cancel_current()
+
+    def _cancel_current(self) -> None:
+        """Cancelación interna explícita que no representa un callback UI."""
         logger.info("Cancelando flujo de acoplamiento.")
         self._ui_manager.send_command({
             "action": "hide_menu", "flow_id": self._flow_token
@@ -156,7 +160,7 @@ class SnapFlow:
         self,
         layout_index: int,
         zone_index: int,
-        flow_id: Optional[int] = None,
+        flow_id: int,
     ) -> None:
         """
         El usuario seleccionó una zona. Procede con la lógica de animación 
@@ -233,13 +237,13 @@ class SnapFlow:
                 on_error=lambda error: self._rollback_transaction(str(error)),
             )
         except TypeError as error:
-            # Compatibilidad con motores/mocks de fases anteriores.
+            # Compatibilidad con motores de animación sin callback de error.
             if "on_error" not in str(error):
                 raise
             self._animation_engine.animate_async(**animation_args)
 
     def confirm_assist_selection(
-        self, wid: Optional[int], flow_id: Optional[int] = None
+        self, wid: Optional[int], flow_id: int
     ) -> None:
         """Acopla una sugerencia y continúa con la siguiente zona vacía."""
         if not wid or not self._accepts_callback(flow_id) or self._phase != "assist":
@@ -280,7 +284,7 @@ class SnapFlow:
         self._show_next_empty_zone()
 
     def cancel_snap_assist(
-        self, reason: str = "escape", flow_id: Optional[int] = None
+        self, reason: str, flow_id: int
     ) -> None:
         """Finaliza las sugerencias conservando las zonas ya completadas."""
         if not self._accepts_callback(flow_id):
@@ -408,10 +412,10 @@ class SnapFlow:
         """Cierra cualquier selector que haya quedado sobre otra topología."""
         if self._is_active:
             logger.info("Topología de monitores cambió; cerrando flujo activo")
-            self.cancel()
+            self._cancel_current()
 
     def on_ui_command_failed(
-        self, action: str, error: str, flow_id: Optional[int] = None
+        self, action: str, error: str, flow_id: int
     ) -> None:
         """Recupera el coordinador si Tkinter no pudo mostrar un flujo."""
         if not self._accepts_callback(flow_id):
@@ -487,12 +491,10 @@ class SnapFlow:
                 self._monitor_idx,
             )
 
-    def _accepts_callback(self, flow_id: Optional[int]) -> bool:
-        """Acepta llamadas directas y callbacks del flujo actualmente visible."""
-        accepted = self._is_active and (
-            flow_id is None or flow_id == self._flow_token
-        )
-        if not accepted and flow_id is not None:
+    def _accepts_callback(self, flow_id: int) -> bool:
+        """Acepta únicamente callbacks de la UI actualmente visible."""
+        accepted = self._is_active and flow_id == self._flow_token
+        if not accepted:
             logger.debug(
                 "Callback obsoleto ignorado: recibido=%s, activo=%s, estado=%s",
                 flow_id,

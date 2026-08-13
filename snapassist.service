@@ -1,15 +1,15 @@
 [Unit]
 Description=SnapAssist Window Manager Daemon
-Documentation=file://%h/.local/share/snapassist/README.md
+Documentation=file://@INSTALL_DIR@/README.md
 After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/.local/share/snapassist
-EnvironmentFile=-%h/.config/snapassist/environment
-ExecStartPre=%h/.local/share/snapassist/venv/bin/python -m snapassist.wait_for_x11
-ExecStart=%h/.local/share/snapassist/venv/bin/python -m snapassist.main
+WorkingDirectory="@INSTALL_DIR@"
+EnvironmentFile=-"@ENV_FILE@"
+ExecStartPre="@INSTALL_DIR@/venv/bin/python" -m snapassist.wait_for_x11
+ExecStart="@INSTALL_DIR@/venv/bin/python" -m snapassist.main
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=5

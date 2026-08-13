@@ -44,7 +44,13 @@ install -d "${INSTALL_DIR}" "${UNIT_DIR}" "${APP_CONFIG_DIR}"
 cp -a "${SOURCE_DIR}/snapassist" "${INSTALL_DIR}/"
 install -m 0644 "${SOURCE_DIR}/requirements.txt" "${INSTALL_DIR}/requirements.txt"
 install -m 0644 "${SOURCE_DIR}/README.md" "${INSTALL_DIR}/README.md"
-install -m 0644 "${SOURCE_DIR}/snapassist.service" "${UNIT_DIR}/snapassist.service"
+install -m 0644 "${SOURCE_DIR}/LICENSE" "${INSTALL_DIR}/LICENSE"
+install -m 0644 "${SOURCE_DIR}/CHANGELOG.md" "${INSTALL_DIR}/CHANGELOG.md"
+install -m 0644 "${SOURCE_DIR}/pyproject.toml" "${INSTALL_DIR}/pyproject.toml"
+unit_template="$(<"${SOURCE_DIR}/snapassist.service")"
+unit_template="${unit_template//@INSTALL_DIR@/${INSTALL_DIR}}"
+unit_template="${unit_template//@ENV_FILE@/${ENV_FILE}}"
+printf '%s\n' "${unit_template}" >"${UNIT_DIR}/snapassist.service"
 
 if [[ "${SNAPASSIST_SKIP_SYSTEMD:-0}" != "1" ]]; then
     # La instancia systemd del usuario no siempre hereda estas variables del

@@ -148,7 +148,7 @@ def test_imports_phase2():
     from snapassist.core.state import State
     from snapassist.main import (
         setup_logging, detect_and_create_backend,
-        log_system_state, create_super_z_callback, main,
+        log_system_state, main,
     )
 
     print("  ✓ Todos los módulos de Fase 2 importan correctamente.")

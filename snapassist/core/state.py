@@ -7,6 +7,7 @@ Todo se inicializa vacío al arrancar el daemon.
 """
 
 import logging
+import threading
 from copy import deepcopy
 from typing import Dict, List, Optional
 
@@ -24,6 +25,7 @@ class State:
     """
 
     def __init__(self) -> None:
+        self._owner_thread_id: Optional[int] = None
         # Lista de window_id ordenada por recencia de foco (índice 0 = más reciente)
         self.mru_list: List[int] = []
 
@@ -41,6 +43,26 @@ class State:
 
         logger.info("Estado global inicializado (vacío).")
 
+    def bind_to_current_thread(self) -> None:
+        """Vincula las mutaciones al event loop que posee el estado.
+
+        Se llama después del wiring para que los tests puedan construir el
+        objeto libremente. Una vez vinculado, una mutación desde la UI u otro
+        hilo es un error de programación, no una condición que deba ocultarse
+        con locks.
+        """
+        current = threading.get_ident()
+        if self._owner_thread_id not in (None, current):
+            raise RuntimeError("State ya pertenece a otro hilo")
+        self._owner_thread_id = current
+
+    def _assert_owner_thread(self) -> None:
+        if (
+            self._owner_thread_id is not None
+            and threading.get_ident() != self._owner_thread_id
+        ):
+            raise RuntimeError("State solo puede mutarse desde el event loop")
+
     # ------------------------------------------------------------------
     # MRU (Most Recently Used)
     # ------------------------------------------------------------------
@@ -55,6 +77,7 @@ class State:
         Si no existe, lo inserta al frente.
         Ignora wid=0 o wid=None (significan "sin ventana activa").
         """
+        self._assert_owner_thread()
         if not wid:
             return
 
@@ -65,6 +88,7 @@ class State:
 
     def remove_from_mru(self, wid: int) -> None:
         """Remueve un window_id de la lista MRU (e.g., al cerrar ventana)."""
+        self._assert_owner_thread()
         if wid in self.mru_list:
             self.mru_list.remove(wid)
             logger.debug("Ventana 0x%x removida de MRU. Total: %d", wid, len(self.mru_list))
@@ -111,6 +135,7 @@ class State:
 
     def save_geometry(self, wid: int, geom: WindowGeometry) -> None:
         """Guarda la geometría previa de una ventana antes de acoplarla."""
+        self._assert_owner_thread()
         self.saved_geometries[wid] = geom
         logger.debug(
             "Geometría guardada para 0x%x: Rect(%d, %d, %d, %d), maximized=%s",
@@ -127,6 +152,7 @@ class State:
         Retorna y elimina la geometría guardada de una ventana.
         Retorna None si no hay geometría guardada para ese wid.
         """
+        self._assert_owner_thread()
         geom = self.saved_geometries.pop(wid, None)
         if geom:
             logger.debug("Geometría restaurada para 0x%x", wid)
@@ -146,6 +172,7 @@ class State:
 
     def mark_snapped(self, wid: int, zone_ref: ZoneRef) -> None:
         """Marca una ventana como acoplada a una zona específica."""
+        self._assert_owner_thread()
         self.snapped_windows[wid] = zone_ref
         logger.debug(
             "Ventana 0x%x acoplada: grupo=%s, zona=%d",
@@ -154,6 +181,7 @@ class State:
 
     def unmark_snapped(self, wid: int) -> None:
         """Remueve la marca de acoplamiento de una ventana."""
+        self._assert_owner_thread()
         if wid in self.snapped_windows:
             ref = self.snapped_windows.pop(wid)
             logger.debug(
@@ -176,6 +204,7 @@ class State:
 
     def restore_snap_state(self, snapshot: dict) -> None:
         """Restaura atómicamente un snapshot creado por ``snapshot_snap_state``."""
+        self._assert_owner_thread()
         self.saved_geometries = deepcopy(snapshot["saved_geometries"])
         self.snapped_windows = deepcopy(snapshot["snapped_windows"])
         self.active_groups = deepcopy(snapshot["active_groups"])

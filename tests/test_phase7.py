@@ -91,7 +91,7 @@ def make_flow():
 def test_eligible_list_is_frozen_after_first_snap():
     flow, backend, _state, ui = make_flow()
     flow.trigger()
-    flow.confirm_selection(0, 0)
+    flow.confirm_selection(0, 0, flow._flow_token)
 
     command = ui.commands[-1]
     assert command["action"] == "show_snap_assist"
@@ -131,8 +131,8 @@ def test_empty_zone_assignment_for_every_template():
 def test_selection_moves_workspace_and_uses_origin_monitor_zones():
     flow, backend, state, ui = make_flow()
     flow.trigger()
-    flow.confirm_selection(0, 0)
-    flow.confirm_assist_selection(2)
+    flow.confirm_selection(0, 0, flow._flow_token)
+    flow.confirm_assist_selection(2, flow._flow_token)
 
     assert backend.workspace_moves == [2]
     selected_move = [rect for wid, rect in backend.moves if wid == 2][-1]
@@ -146,10 +146,10 @@ def test_selection_moves_workspace_and_uses_origin_monitor_zones():
 def test_cancel_preserves_windows_already_snapped():
     flow, _backend, state, _ui = make_flow()
     flow.trigger()
-    flow.confirm_selection(4, 0)
+    flow.confirm_selection(4, 0, flow._flow_token)
 
     assert state.is_snapped(1)
-    flow.cancel_snap_assist("escape")
+    flow.cancel_snap_assist("escape", flow._flow_token)
     assert state.is_snapped(1)
     assert not flow._is_active
 

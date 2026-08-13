@@ -86,10 +86,10 @@ def test_third_window_failure_rolls_back_geometry_and_state():
     flow._animation_engine = ImmediateAnimation()
 
     flow.trigger()
-    flow.confirm_selection(4, 0)
-    flow.confirm_assist_selection(2)
+    flow.confirm_selection(4, 0, flow._flow_token)
+    flow.confirm_assist_selection(2, flow._flow_token)
     wm.fail_wid = 3
-    flow.confirm_assist_selection(3)
+    flow.confirm_assist_selection(3, flow._flow_token)
 
     assert wm.rects == wm.original
     assert state.saved_geometries == {}

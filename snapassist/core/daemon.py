@@ -4,7 +4,7 @@ core/daemon.py — Event loop principal del daemon SnapAssist.
 Escucha eventos X11 de forma bloqueante y los despacha a los handlers
 correspondientes. El event loop recibe PropertyNotify (cambio de ventana
 activa → actualización MRU), KeyPress (atajos globales → callbacks), y
-eventos estructurales (Map/Unmap/Destroy/Configure) para fases posteriores.
+eventos estructurales (Map/Unmap/Destroy/Configure) y gestos de puntero.
 """
 
 import logging
@@ -98,7 +98,7 @@ class Daemon:
 
         Escucha eventos X11 y los despacha a handlers específicos:
         - PropertyNotify sobre _NET_ACTIVE_WINDOW → actualización MRU
-        - Map/Unmap/Destroy/ConfigureNotify → logging (fases futuras)
+        - Map/Unmap/Destroy/ConfigureNotify → ciclo de vida y gestos
         """
         import select
         self._running = True
@@ -366,7 +366,7 @@ class Daemon:
         try:
             return bool(consume(wid, event))
         except TypeError:
-            # Compatibilidad con mocks y backends de fases anteriores.
+            # Compatibilidad con dobles que no exponen geometría de gesto.
             return bool(consume(wid))
 
     def _handle_pointer_event(self, event) -> None:
@@ -479,6 +479,10 @@ class Daemon:
     def _handle_ui_callback(self, msg) -> None:
         """Procesa callbacks enviados desde el hilo de la UI."""
         if not self._snap_flow:
+            return
+
+        if msg.get("flow_id") is None:
+            logger.warning("Callback UI sin flow_id ignorado: %s", msg.get("event"))
             return
             
         event = msg.get("event")

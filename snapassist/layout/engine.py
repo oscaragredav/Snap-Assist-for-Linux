@@ -68,7 +68,7 @@ class LayoutEngine:
         """
         Calcula todos los rectángulos de un layout completo.
         
-        Útil para el overlay visual (Fase 4).
+        Útil para el overlay visual.
         """
         return [
             self.calculate_zone_rect(work_area, zone)

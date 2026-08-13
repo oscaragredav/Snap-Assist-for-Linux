@@ -21,6 +21,7 @@ from snapassist.config import (
     WindowType,
 )
 from snapassist.wm.backend import WindowManager
+from snapassist.wm.desktop_entries import DesktopEntryResolver
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class X11Backend(WindowManager):
             "_NET_WM_STRUT": self._display.intern_atom("_NET_WM_STRUT"),
             "_NET_WM_STRUT_PARTIAL": self._display.intern_atom("_NET_WM_STRUT_PARTIAL"),
             "_NET_WM_NAME": self._display.intern_atom("_NET_WM_NAME"),
+            "_GTK_APPLICATION_ID": self._display.intern_atom("_GTK_APPLICATION_ID"),
             "_NET_WM_WINDOW_TYPE": self._display.intern_atom("_NET_WM_WINDOW_TYPE"),
             "_NET_WM_WINDOW_TYPE_NORMAL": self._display.intern_atom(
                 "_NET_WM_WINDOW_TYPE_NORMAL"
@@ -124,6 +126,7 @@ class X11Backend(WindowManager):
         self._supports_moveresize = self._root_supports_atom(
             self._atoms["_NET_MOVERESIZE_WINDOW"]
         )
+        self._desktop_entries = DesktopEntryResolver()
 
         logger.info(
             "Backend X11 inicializado. Root window: 0x%x",
@@ -202,7 +205,7 @@ class X11Backend(WindowManager):
         ]
 
     def _is_eligible_window(self, wid: int) -> bool:
-        """Aplica el filtro de Fase 6 sin excluir ventanas minimizadas."""
+        """Aplica el filtro de elegibilidad sin excluir ventanas minimizadas."""
         try:
             window = self._display.create_resource_object("window", wid)
             attributes = window.get_attributes()
@@ -363,13 +366,23 @@ class X11Backend(WindowManager):
         return ""
 
     def get_window_app_name(self, wid: int) -> str:
-        """Obtiene el nombre de aplicación desde WM_CLASS y lo hace legible."""
+        """Resuelve el nombre XDG; usa el mapa histórico sólo como fallback."""
         try:
             window = self._display.create_resource_object("window", wid)
             wm_class = window.get_wm_class()
-            if not wm_class:
+            identifiers = [str(value) for value in (wm_class or ()) if value]
+            app_id_prop = window.get_full_property(
+                self._atoms["_GTK_APPLICATION_ID"], self._atoms["UTF8_STRING"]
+            )
+            if app_id_prop is not None and app_id_prop.value:
+                value = app_id_prop.value
+                identifiers.insert(0, value.decode("utf-8", "replace") if isinstance(value, bytes) else str(value))
+            resolved = self._desktop_entries.resolve(*identifiers)
+            if resolved:
+                return resolved
+            if not identifiers:
                 return ""
-            raw_name = str(wm_class[-1] or wm_class[0]).strip()
+            raw_name = identifiers[-1].strip()
             known_names = {
                 "firefox": "Mozilla Firefox",
                 "navigator": "Mozilla Firefox",
@@ -555,7 +568,7 @@ class X11Backend(WindowManager):
 
         Calcula por intersección de geometrías: el monitor con mayor área
         de intersección con la geometría de la ventana gana.
-        En esta fase retorna siempre 0 (monitor primario) si no hay
+        Retorna 0 (monitor primario) si no hay
         información multi-monitor disponible via Xinerama.
         """
         try:
@@ -582,7 +595,7 @@ class X11Backend(WindowManager):
     def get_transient_for(self, wid: int) -> Optional[int]:
         """
         Retorna el window_id del padre transitorio (WM_TRANSIENT_FOR).
-        Stub en Fase 1 — se completa en Fase 3.
+        Conserva las coordenadas del cliente cuando no hay extents disponibles.
         """
         try:
             window = self._display.create_resource_object("window", wid)
@@ -600,7 +613,7 @@ class X11Backend(WindowManager):
         return None
 
     # ------------------------------------------------------------------
-    # Métodos de acción (stubs en Fase 1)
+    # Métodos de acción
     # ------------------------------------------------------------------
 
     def prepare_window_for_snap(self, wid: int) -> None:

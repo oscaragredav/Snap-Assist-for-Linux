@@ -10,6 +10,8 @@ No necesitas saber programar para instalarlo ni para usarlo.
 > **Importante:** actualmente funciona en sesiones **X11 (Xorg)** de Zorin OS,
 > Ubuntu y distribuciones similares. Wayland todavía no es compatible.
 
+La versión estable actual es **1.1.0**. Se distribuye bajo GPL-3.0-only.
+
 ## Qué puedes hacer
 
 - Elegir visualmente cómo dividir la pantalla.
@@ -159,3 +161,7 @@ esa información a un servicio en línea.
 Si encuentras un problema o quieres proponer una mejora, abre un *issue* en el
 [repositorio de SnapAssist](https://github.com/oscaragredav/Snap-Assist-for-Linux/issues)
 e incluye tu distribución de Linux, si usas X11 y qué ocurrió.
+
+Los diagnósticos de `scratch/` son herramientas para mantenedores y no forman
+parte del paquete instalado. Consulta [CONTRIBUTING.md](CONTRIBUTING.md) para
+ejecutar las comprobaciones de desarrollo.

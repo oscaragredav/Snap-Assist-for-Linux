@@ -23,7 +23,7 @@ from pathlib import Path
 
 from snapassist.config import (
     ERROR_LOG_FILE, LOG_DIR, LOG_FILE, LOG_MAX_BYTES, LOG_BACKUP_COUNT,
-    HOTKEY_HELP, HOTKEY_LAYOUT_MENU, HOTKEY_SNAP_GROUPS, LAYOUT_TEMPLATES,
+    HOTKEY_HELP, HOTKEY_LAYOUT_MENU, HOTKEY_SNAP_GROUPS,
 )
 from snapassist.core.daemon import Daemon, WakeableQueue
 from snapassist.core.hotkeys import HotkeyManager
@@ -200,38 +200,6 @@ def log_system_state(wm_backend, state: State) -> None:
     logger.info(state.summary())
 
 
-def create_super_z_callback(wm_backend, state: State, snap_engine: SnapEngine):
-    """
-    Crea el callback para Super+Z.
-
-    En Fase 3, el callback mueve la ventana activa a la mitad izquierda
-    (layout 1:1, zona 0) para verificar el funcionamiento del backend.
-    """
-    logger_cb = logging.getLogger("snapassist.hotkey.super_z")
-
-    def on_super_z():
-        active_wid = wm_backend.get_active_window()
-
-        if not active_wid:
-            logger_cb.warning(
-                "Super+Z invocado sin ventana elegible "
-                "(foco en el escritorio o panel)."
-            )
-            return
-
-        title = wm_backend.get_window_title(active_wid)
-        logger_cb.info(
-            "Fase 3: Moviendo ventana 0x%x \"%s\" a mitad izquierda...",
-            active_wid, title
-        )
-
-        # Fase 3: ejecutar el snap directamente a la mitad izquierda
-        layout = LAYOUT_TEMPLATES[0]
-        snap_engine.snap_window_to_zone(active_wid, layout, 0)
-
-    return on_super_z
-
-
 def build_help_message(wm_backend, state: State, group_manager, active_wid) -> str:
     """Construye el contenido de `Super+/`, también reutilizable en pruebas."""
     group = group_manager.get_group_for_window(active_wid) if active_wid else None
@@ -283,12 +251,12 @@ def main() -> None:
         callback_queue=control_callback_queue,
     )
     
-    # 5. Inicializar UI en hilo separado
+    # Inicializar UI en hilo separado.
     ui_callback_queue = WakeableQueue()
     ui_manager = UIManager(ui_callback_queue)
     ui_manager.start()
     
-    # 6. Máquina de estados interactiva (Fase 4)
+    # Máquina de estados interactiva.
     snap_flow = SnapFlow(
         wm_backend,
         state,
@@ -345,6 +313,7 @@ def main() -> None:
         snap_flow=snap_flow,
         group_manager=group_manager,
     )
+    state.bind_to_current_thread()
 
     # 8. Registrar handlers de señales para apagado limpio
     def signal_handler(signum, frame):

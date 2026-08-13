@@ -11,6 +11,7 @@ TESTS = [
     "test_phase1.py", "test_phase2.py", "test_phase3.py", "test_phase4.py",
     "test_phase5.py", "test_phase6.py", "test_phase7.py", "test_phase8.py",
     "test_phase9.py", "test_phase10.py", "test_qa_regressions.py",
+    "test_release_contract.py",
 ]
 
 

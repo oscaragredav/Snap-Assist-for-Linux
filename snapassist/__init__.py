@@ -1,1 +1,3 @@
-# SnapAssist — Daemon de gestión de ventanas tipo Windows 11 Snap Assist para Linux
+"""SnapAssist — gestión de ventanas tipo Snap Assist para Linux."""
+
+__version__ = "1.1.0"

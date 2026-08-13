@@ -33,7 +33,7 @@ class WindowManager(ABC):
     def get_all_windows(self) -> List[int]:
         """
         Retorna la lista de window_id de todas las ventanas del cliente
-        según _NET_CLIENT_LIST. No aplica filtros de elegibilidad en esta fase.
+        según el backend. El filtrado se expone por separado cuando corresponde.
         """
         ...
 
