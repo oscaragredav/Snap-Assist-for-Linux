@@ -12,8 +12,8 @@ from snapassist.wm.desktop_entries import DesktopEntryResolver
 def test_version_and_packaging_metadata_agree():
     from snapassist import __version__
 
-    assert __version__ == "1.1.0"
-    assert 'version = "1.1.0"' in (ROOT / "pyproject.toml").read_text()
+    assert __version__ == "2.0.0.dev0"
+    assert 'version = "2.0.0.dev0"' in (ROOT / "pyproject.toml").read_text()
     assert (ROOT / "LICENSE").is_file()
     assert (ROOT / "CHANGELOG.md").is_file()
 

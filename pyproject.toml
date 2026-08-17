@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "snapassist"
-version = "1.1.0"
-description = "Snap Assist-style window layouts for Linux X11"
+version = "2.0.0.dev0"
+description = "Snap Assist-style window layouts for GNOME X11 and Wayland"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}

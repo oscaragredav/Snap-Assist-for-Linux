@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    echo "Uso: snapassist-channel stable|test|status" >&2
+    exit 2
+}
+
+target="${1:-}"
+[[ $# -eq 1 ]] || usage
+
+stable_unit="snapassist.service"
+test_unit="snapassist-test.service"
+data_home="${SNAPASSIST_DATA_HOME:-${XDG_DATA_HOME:-${HOME}/.local/share}}"
+
+manifest_value() {
+    local instance="$1"
+    local key="$2"
+    local manifest="${data_home}/${instance}/install-manifest"
+    [[ -f "${manifest}" ]] || return 0
+    awk -F= -v wanted="${key}" '$1 == wanted {sub(/^[^=]*=/, ""); print; exit}' "${manifest}"
+}
+
+extension_enabled() {
+    local uuid="$1"
+    [[ -n "${uuid}" ]] || return 1
+    command -v gnome-extensions >/dev/null 2>&1 || return 1
+    while IFS= read -r enabled; do
+        [[ "${enabled}" == "${uuid}" ]] && return 0
+    done < <(gnome-extensions list --enabled 2>/dev/null || true)
+    return 1
+}
+
+set_extension() {
+    local action="$1" uuid="$2"
+    [[ -n "${uuid}" ]] || return 0
+    command -v gnome-extensions >/dev/null 2>&1 || {
+        echo "gnome-extensions no está disponible para ${uuid}." >&2
+        return 1
+    }
+    gnome-extensions "${action}" "${uuid}"
+}
+
+health_check() {
+    local channel="$1" instance="$2"
+    local runtime install_dir
+    runtime="$(manifest_value "${instance}" runtime)"
+    [[ "${runtime}" == "gnome" ]] || return 0
+    install_dir="$(manifest_value "${instance}" install_dir)"
+    [[ -n "${install_dir}" ]] || return 1
+    if [[ -n "${SNAPASSIST_HEALTH_COMMAND:-}" ]]; then
+        "${SNAPASSIST_HEALTH_COMMAND}" "${channel}" "${install_dir}"
+    else
+        PYTHONPATH="${install_dir}${PYTHONPATH:+:${PYTHONPATH}}" \
+            SNAPASSIST_CHANNEL="${channel}" \
+            /usr/bin/python3 -m snapassist.health --timeout 3
+    fi
+}
+
+show_status() {
+    for entry in "stable:snapassist:${stable_unit}" "test:snapassist-test:${test_unit}"; do
+        IFS=: read -r channel instance unit <<<"${entry}"
+        if systemctl --user is-active --quiet "${unit}"; then
+            state="active"
+        elif systemctl --user cat "${unit}" >/dev/null 2>&1; then
+            state="inactive"
+        else
+            state="not-installed"
+        fi
+        version="$(manifest_value "${instance}" version)"
+        runtime="$(manifest_value "${instance}" runtime)"
+        extension="$(manifest_value "${instance}" extension_uuid)"
+        extension_state="none"
+        if [[ -n "${extension}" ]]; then
+            extension_state="disabled"
+            extension_enabled "${extension}" && extension_state="enabled"
+        fi
+        printf '%s: %s version=%s runtime=%s extension=%s\n' \
+            "${channel}" "${state}" "${version:-unknown}" \
+            "${runtime:-unknown}" "${extension_state}"
+    done
+}
+
+if [[ "${target}" == "status" ]]; then
+    show_status
+    exit 0
+fi
+[[ "${target}" == "stable" || "${target}" == "test" ]] || usage
+
+if [[ "${target}" == "stable" ]]; then
+    target_unit="${stable_unit}"
+    other_unit="${test_unit}"
+    target_instance="snapassist"
+    other_instance="snapassist-test"
+else
+    target_unit="${test_unit}"
+    other_unit="${stable_unit}"
+    target_instance="snapassist-test"
+    other_instance="snapassist"
+fi
+target_extension="$(manifest_value "${target_instance}" extension_uuid)"
+other_extension="$(manifest_value "${other_instance}" extension_uuid)"
+target_runtime="$(manifest_value "${target_instance}" runtime)"
+if [[ "${target_runtime}" != "gnome" ]]; then
+    target_extension=""
+fi
+
+systemctl --user cat "${target_unit}" >/dev/null 2>&1 || {
+    echo "El canal '${target}' no está instalado (${target_unit})." >&2
+    exit 1
+}
+
+other_was_active=0
+if systemctl --user is-active --quiet "${other_unit}"; then
+    other_was_active=1
+fi
+other_extension_was_enabled=0
+if extension_enabled "${other_extension}"; then
+    other_extension_was_enabled=1
+fi
+systemctl --user disable --now "${other_unit}" 2>/dev/null || true
+set_extension disable "${other_extension}" 2>/dev/null || true
+if ! set_extension enable "${target_extension}"; then
+    switch_ok=0
+elif systemctl --user enable --now "${target_unit}" && \
+     systemctl --user is-active --quiet "${target_unit}" && \
+     health_check "${target}" "${target_instance}"; then
+    switch_ok=1
+else
+    switch_ok=0
+fi
+if [[ ${switch_ok} -eq 1 ]]; then
+    echo "Canal activo: ${target} (${target_unit})"
+    exit 0
+fi
+
+echo "No se pudo iniciar ${target_unit}." >&2
+systemctl --user disable --now "${target_unit}" 2>/dev/null || true
+set_extension disable "${target_extension}" 2>/dev/null || true
+if [[ ${other_was_active} -eq 1 ]]; then
+    echo "Restaurando ${other_unit}..." >&2
+    systemctl --user enable --now "${other_unit}"
+fi
+if [[ ${other_extension_was_enabled} -eq 1 ]]; then
+    set_extension enable "${other_extension}"
+fi
+exit 1

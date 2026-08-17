@@ -3,13 +3,17 @@ Description=SnapAssist Window Manager Daemon
 Documentation=file://@INSTALL_DIR@/README.md
 After=graphical-session.target
 PartOf=graphical-session.target
+Conflicts=@CONFLICT_UNIT@
 
 [Service]
 Type=simple
-WorkingDirectory="@INSTALL_DIR@"
-EnvironmentFile=-"@ENV_FILE@"
-ExecStartPre="@INSTALL_DIR@/venv/bin/python" -m snapassist.wait_for_x11
-ExecStart="@INSTALL_DIR@/venv/bin/python" -m snapassist.main
+WorkingDirectory=@INSTALL_DIR@
+EnvironmentFile=-@ENV_FILE@
+Environment="SNAPASSIST_CHANNEL=@CHANNEL@"
+Environment="SNAPASSIST_LOG_DIR=@LOG_DIR@"
+Environment="SNAPASSIST_CONFIG_FILE=@SETTINGS_FILE@"
+@EXEC_START_PRE@
+ExecStart=@EXEC_START@
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=5

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.snapassist.shell.test" path="/org/snapassist/shell/test/">
+    <key name="show-layouts" type="as">
+      <default>['&lt;Super&gt;z']</default>
+      <summary>Open the experimental SnapAssist menu</summary>
+    </key>
+    <key name="show-snap-groups" type="as">
+      <default>['&lt;Super&gt;&lt;Alt&gt;Tab']</default>
+      <summary>Focus the active SnapAssist group</summary>
+    </key>
+    <key name="show-help" type="as">
+      <default>['&lt;Super&gt;slash']</default>
+      <summary>Show SnapAssist help</summary>
+    </key>
+  </schema>
+</schemalist>

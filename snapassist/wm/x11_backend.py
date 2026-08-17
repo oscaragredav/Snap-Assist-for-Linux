@@ -173,6 +173,13 @@ class X11Backend(WindowManager):
         )
         return [int(wid) for wid in prop.value] if prop and prop.value is not None else []
 
+    def get_snapshot_windows(self) -> List[int]:
+        try:
+            return self._get_raw_client_windows()
+        except Exception as error:
+            logger.error("Error leyendo ventanas observables: %s", error)
+            return []
+
     def get_transient_children(self, wid: int) -> List[int]:
         """Retorna diálogos cuyo WM_TRANSIENT_FOR apunta a ``wid``.
 
@@ -243,6 +250,32 @@ class X11Backend(WindowManager):
         except Exception as e:
             logger.error("Error leyendo workspace de 0x%x: %s", wid, e)
             return False
+
+    def get_current_workspace(self) -> int:
+        """Lee `_NET_CURRENT_DESKTOP` sin exponer átomos fuera del backend."""
+        try:
+            current = self._root.get_full_property(
+                self._atoms["_NET_CURRENT_DESKTOP"], X.AnyPropertyType
+            )
+            return int(current.value[0]) if current and current.value else 0
+        except Exception as error:
+            logger.warning("No se pudo leer el workspace actual: %s", error)
+            return 0
+
+    def get_window_workspace(self, wid: int) -> int:
+        """Lee `_NET_WM_DESKTOP`; ventanas sticky se asocian al actual."""
+        try:
+            window = self._display.create_resource_object("window", wid)
+            desktop = window.get_full_property(
+                self._atoms["_NET_WM_DESKTOP"], X.AnyPropertyType
+            )
+            value = int(desktop.value[0]) if desktop and desktop.value else 0
+            return self.get_current_workspace() if value == 0xFFFFFFFF else value
+        except (BadWindow, BadDrawable):
+            return self.get_current_workspace()
+        except Exception as error:
+            logger.warning("No se pudo leer workspace de 0x%x: %s", wid, error)
+            return self.get_current_workspace()
 
     def get_window_geometry(self, wid: int) -> WindowGeometry:
         """

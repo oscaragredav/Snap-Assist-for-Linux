@@ -210,7 +210,7 @@ def test_layout_templates():
 
     # Verificar el template 1:1 específicamente
     half_half = LAYOUT_TEMPLATES[0]
-    assert half_half.name == "1:1"
+    assert half_half.name == "1/2 : 1/2"
     assert len(half_half.zones) == 2
     assert half_half.zones[0].w == 0.5
     assert half_half.zones[1].x == 0.5

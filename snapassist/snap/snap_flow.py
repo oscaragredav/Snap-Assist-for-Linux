@@ -30,12 +30,16 @@ class SnapFlow:
         snap_engine: SnapEngine,
         ui_manager: UIManager,
         group_manager: Optional[GroupManager] = None,
+        layouts: Optional[List[LayoutTemplate]] = None,
     ):
         self._wm = wm
         self._state = state
         self._snap_engine = snap_engine
         self._ui_manager = ui_manager
         self._group_manager = group_manager
+        self._layouts = list(layouts if layouts is not None else LAYOUT_TEMPLATES)
+        if not self._layouts:
+            raise ValueError("SnapFlow requiere al menos un layout")
         self._animation_engine = AnimationEngine(fps=60, duration_ms=200)
         self._layout_engine = LayoutEngine(gap_px=0)
         
@@ -108,7 +112,7 @@ class SnapFlow:
         
         # Pre-calcular rectángulos absolutos
         self._absolute_rects = []
-        for layout in LAYOUT_TEMPLATES:
+        for layout in self._layouts:
             layout_rects = []
             for zone in layout.zones:
                 rect = self._layout_engine.calculate_zone_rect(self._monitor_rect, zone)
@@ -118,7 +122,7 @@ class SnapFlow:
         snappable_count = max(1, len(self._wm.get_all_windows()))
         disabled_layouts = [
             len(layout.zones) > snappable_count
-            for layout in LAYOUT_TEMPLATES
+            for layout in self._layouts
         ]
         app_name_reader = getattr(self._wm, "get_window_app_name", None)
         active_info = WindowInfo(
@@ -130,7 +134,7 @@ class SnapFlow:
         self._ui_manager.send_command({
             "action": "show_menu",
             "flow_id": self._flow_token,
-            "layouts": LAYOUT_TEMPLATES,
+            "layouts": self._layouts,
             "absolute_rects": self._absolute_rects,
             "monitor_rect": self._monitor_rect,
             "disabled_layouts": disabled_layouts,
@@ -190,7 +194,7 @@ class SnapFlow:
         if not self._state.get_saved_geometry(wid_to_animate):
             self._state.save_geometry(wid_to_animate, start_geom)
 
-        self._selected_layout = LAYOUT_TEMPLATES[layout_index]
+        self._selected_layout = self._layouts[layout_index]
         self._selected_layout_index = layout_index
         self._occupied_zones = []
         self._current_zone = None
@@ -199,6 +203,7 @@ class SnapFlow:
         self._snapped_map = {}
         self._eligible_windows = self._freeze_eligible_windows(wid_to_animate)
         self._phase = "animating"
+        self._wm.set_window_maximized(wid_to_animate, False)
         
         def update_frame(rect: Rect):
             if self._wm.move_resize_window(wid_to_animate, rect) is False:

@@ -5,6 +5,7 @@ Contiene todas las constantes modificables por el usuario sin tocar código de l
 así como los dataclasses y enums compartidos por todos los módulos del sistema.
 """
 
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
@@ -153,7 +154,10 @@ QUICKKEY_SEQUENCE   = "qwertyuiop"
 OVERLAY_OPACITY     = 0.35      # opacidad del overlay (0.0 – 1.0)
 
 # Logging
-LOG_DIR             = "~/.local/share/snapassist"
+LOG_DIR             = os.environ.get(
+    "SNAPASSIST_LOG_DIR",
+    "~/.local/share/snapassist",
+)
 LOG_FILE            = "daemon.log"
 ERROR_LOG_FILE      = "errors.log"
 LOG_MAX_BYTES       = 5 * 1024 * 1024   # 5 MB por archivo de log
@@ -165,25 +169,25 @@ LOG_BACKUP_COUNT    = 7                  # mantener 7 archivos rotados
 
 LAYOUT_TEMPLATES: List[LayoutTemplate] = [
     # 1:1 — Dos mitades iguales
-    LayoutTemplate("1:1", [
+    LayoutTemplate("1/2 : 1/2", [
         ZoneTemplate(0.0, 0.0, 0.5, 1.0),
         ZoneTemplate(0.5, 0.0, 0.5, 1.0),
     ]),
 
     # 2/3 + 1/3
-    LayoutTemplate("2/3 + 1/3", [
-        ZoneTemplate(0.0,   0.0, 0.667, 1.0),
-        ZoneTemplate(0.667, 0.0, 0.333, 1.0),
+    LayoutTemplate("2/3 : 1/3", [
+        ZoneTemplate(0.0, 0.0, 2/3, 1.0),
+        ZoneTemplate(2/3, 0.0, 1/3, 1.0),
     ]),
 
     # 1/3 + 2/3
-    LayoutTemplate("1/3 + 2/3", [
-        ZoneTemplate(0.0,   0.0, 0.333, 1.0),
-        ZoneTemplate(0.333, 0.0, 0.667, 1.0),
+    LayoutTemplate("1/3 : 2/3", [
+        ZoneTemplate(0.0, 0.0, 1/3, 1.0),
+        ZoneTemplate(1/3, 0.0, 2/3, 1.0),
     ]),
 
     # Cuadrícula 2×2
-    LayoutTemplate("2×2", [
+    LayoutTemplate("1/4 : 1/4 : 1/4 : 1/4", [
         ZoneTemplate(0.0, 0.0, 0.5, 0.5),
         ZoneTemplate(0.5, 0.0, 0.5, 0.5),
         ZoneTemplate(0.0, 0.5, 0.5, 0.5),
@@ -191,16 +195,16 @@ LAYOUT_TEMPLATES: List[LayoutTemplate] = [
     ]),
 
     # 1/2 + 1/4 + 1/4 (columna izquierda completa + dos celdas derechas)
-    LayoutTemplate("1/2 + 1/4 + 1/4", [
+    LayoutTemplate("1/2 : 1/4 : 1/4", [
         ZoneTemplate(0.0, 0.0, 0.5, 1.0),
         ZoneTemplate(0.5, 0.0, 0.5, 0.5),
         ZoneTemplate(0.5, 0.5, 0.5, 0.5),
     ]),
 
     # Tres columnas iguales
-    LayoutTemplate("1:1:1", [
-        ZoneTemplate(0.0,   0.0, 0.333, 1.0),
-        ZoneTemplate(0.333, 0.0, 0.334, 1.0),
-        ZoneTemplate(0.667, 0.0, 0.333, 1.0),
+    LayoutTemplate("1/3 : 1/3 : 1/3", [
+        ZoneTemplate(0.0, 0.0, 1/3, 1.0),
+        ZoneTemplate(1/3, 0.0, 1/3, 1.0),
+        ZoneTemplate(2/3, 0.0, 1/3, 1.0),
     ]),
 ]

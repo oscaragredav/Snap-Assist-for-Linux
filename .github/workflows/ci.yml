@@ -15,8 +15,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - run: sudo apt-get update && sudo apt-get install -y gjs libglib2.0-bin gnome-shell
       - run: python -m pip install -e '.[dev]'
       - run: python -m compileall -q snapassist tests
       - run: ruff check snapassist tests
       - run: pytest
+      - run: bash scripts/run-gnome-nested-smoke.sh
       - run: python -m pip wheel --no-deps --wheel-dir dist .
+      - run: bash scripts/build-gnome-extension.sh dist
+      - run: bash scripts/build-release.sh dist/release
+        env:
+          SNAPASSIST_BUILD_PYTHON: python
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snapassist-${{ matrix.python-version }}
+          path: dist/release/

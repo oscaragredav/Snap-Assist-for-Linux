@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    echo "Uso: snapassist-manage rollback stable|test | migrate stable test | uninstall stable|test [--purge-config]" >&2
+    exit 2
+}
+
+[[ $# -ge 2 ]] || usage
+action="$1"
+shift
+DATA_HOME="${SNAPASSIST_DATA_HOME:-${XDG_DATA_HOME:-${HOME}/.local/share}}"
+CONFIG_HOME="${SNAPASSIST_CONFIG_HOME:-${XDG_CONFIG_HOME:-${HOME}/.config}}"
+SKIP_SYSTEMD="${SNAPASSIST_SKIP_SYSTEMD:-0}"
+
+instance_for() {
+    case "$1" in
+        stable) printf 'snapassist' ;;
+        test) printf 'snapassist-test' ;;
+        *) usage ;;
+    esac
+}
+
+if [[ "${action}" == "migrate" ]]; then
+    [[ $# -eq 2 ]] || usage
+    source_instance="$(instance_for "$1")"
+    target_instance="$(instance_for "$2")"
+    [[ "${source_instance}" != "${target_instance}" ]] || {
+        echo "Origen y destino deben ser canales distintos." >&2
+        exit 1
+    }
+    source_file="${CONFIG_HOME}/${source_instance}/settings.json"
+    target_file="${CONFIG_HOME}/${target_instance}/settings.json"
+    [[ -f "${source_file}" ]] || {
+        echo "No existe configuración para migrar: ${source_file}" >&2
+        exit 1
+    }
+    [[ ! -e "${target_file}" ]] || {
+        echo "El destino ya existe; no se sobrescribirá: ${target_file}" >&2
+        exit 1
+    }
+    import_root="${DATA_HOME}/${target_instance}"
+    PYTHONPATH="${import_root}${PYTHONPATH:+:${PYTHONPATH}}" \
+        SNAPASSIST_CONFIG_FILE="${source_file}" \
+        /usr/bin/python3 -c 'import sys; from pathlib import Path; from snapassist.settings import SettingsEditor; SettingsEditor.load().save(Path(sys.argv[1]))' "${target_file}"
+    echo "Configuración migrada de $1 a $2: ${target_file}"
+    exit 0
+fi
+
+[[ $# -ge 1 ]] || usage
+channel="$1"
+shift
+instance="$(instance_for "${channel}")"
+unit="${instance}.service"
+install_dir="${DATA_HOME}/${instance}"
+config_dir="${CONFIG_HOME}/${instance}"
+unit_file="${CONFIG_HOME}/systemd/user/${unit}"
+
+if [[ "${action}" == "rollback" ]]; then
+    [[ $# -eq 0 ]] || usage
+    backup_base="${DATA_HOME}/snapassist-backups/${instance}"
+    latest=""
+    if [[ -d "${backup_base}" ]]; then
+        for candidate in "${backup_base}"/*; do
+            [[ -d "${candidate}/payload" ]] && latest="${candidate}"
+        done
+    fi
+    [[ -n "${latest}" ]] || {
+        echo "No hay una copia anterior de ${channel}." >&2
+        exit 1
+    }
+    was_active=0
+    if [[ "${SKIP_SYSTEMD}" != "1" ]] && systemctl --user is-active --quiet "${unit}"; then
+        was_active=1
+        systemctl --user stop "${unit}"
+    fi
+    install -d "${install_dir}"
+    rm -rf -- "${install_dir}/snapassist"
+    cp -a "${latest}/payload/." "${install_dir}/"
+    if [[ -f "${latest}/${unit}" ]]; then
+        install -m 0644 "${latest}/${unit}" "${unit_file}"
+    fi
+    if [[ "${SKIP_SYSTEMD}" != "1" ]]; then
+        systemctl --user daemon-reload
+        [[ ${was_active} -eq 0 ]] || systemctl --user start "${unit}"
+    fi
+    echo "Rollback de ${channel} aplicado desde ${latest}."
+    exit 0
+fi
+
+if [[ "${action}" == "uninstall" ]]; then
+    purge=0
+    if [[ "${1:-}" == "--purge-config" ]]; then
+        purge=1
+        shift
+    fi
+    [[ $# -eq 0 ]] || usage
+    if [[ "${SKIP_SYSTEMD}" != "1" ]]; then
+        systemctl --user disable --now "${unit}" 2>/dev/null || true
+    fi
+    rm -rf -- "${install_dir}"
+    rm -f -- "${unit_file}"
+    if [[ "${channel}" == "test" ]]; then
+        extension_uuid="snapassist-test@oscaragredav"
+    else
+        extension_uuid="snapassist@oscaragredav"
+    fi
+    if [[ "${SKIP_SYSTEMD}" != "1" ]] && command -v gnome-extensions >/dev/null 2>&1; then
+        gnome-extensions disable "${extension_uuid}" 2>/dev/null || true
+    fi
+    rm -rf -- "${DATA_HOME}/gnome-shell/extensions/${extension_uuid}"
+    if [[ ${purge} -eq 1 ]]; then
+        rm -rf -- "${config_dir}"
+    fi
+    if [[ "${SKIP_SYSTEMD}" != "1" ]]; then
+        systemctl --user daemon-reload
+    fi
+    echo "Canal ${channel} desinstalado; configuración $([[ ${purge} -eq 1 ]] && printf eliminada || printf conservada)."
+    exit 0
+fi
+
+usage

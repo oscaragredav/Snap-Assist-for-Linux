@@ -61,6 +61,43 @@ automáticamente al entrar en tu sesión.
 Si ya lo tenías instalado y descargaste una versión nueva, ejecuta otra vez
 `bash install.sh` desde la carpeta del proyecto para actualizarlo.
 
+### Probar una versión sin reemplazar la estable
+
+La instalación de pruebas usa código, configuración, logs y servicio separados:
+
+```bash
+bash install.sh --channel test
+snapassist-channel test
+```
+
+Al activar `test`, SnapAssist detiene el canal estable para evitar que dos
+procesos registren los mismos atajos o manipulen las mismas ventanas. Para
+volver a la instalación estable:
+
+```bash
+snapassist-channel stable
+```
+
+Consulta ambos estados con `snapassist-channel status`. Si el canal solicitado
+no puede arrancar, el selector intenta restaurar el servicio y la extensión
+que estaban activos. En runtime GNOME solo confirma el cambio después de un
+handshake y snapshot D-Bus de solo lectura.
+
+En GNOME, el canal de prueba instala además la extensión experimental y usa el
+runtime nativo tanto en X11 como en Wayland. Actívala una vez y abre sus
+preferencias con:
+
+```bash
+gnome-extensions enable snapassist-test@oscaragredav
+gnome-extensions prefs snapassist-test@oscaragredav
+```
+
+Desde Preferencias puedes crear, duplicar, ordenar, activar y editar layouts,
+además de cambiar los tres atajos. Reinicia `snapassist-test.service` para
+aplicar los cambios al daemon de prueba. Estas funciones experimentales no
+cambian el soporte declarado de la versión estable 1.1.0, que continúa siendo
+solo X11.
+
 ## Cómo se usa
 
 1. Haz clic en la ventana que quieres organizar.
@@ -133,11 +170,12 @@ visibles y centradas, aunque no puedan ocupar exactamente una zona pequeña.
 Abre una terminal y ejecuta:
 
 ```bash
-systemctl --user disable --now snapassist.service
-rm ~/.config/systemd/user/snapassist.service
-rm -r ~/.local/share/snapassist ~/.config/snapassist
-systemctl --user daemon-reload
+snapassist-manage uninstall stable
 ```
+
+La configuración se conserva. Añade `--purge-config` si también deseas
+eliminarla. Para desinstalar solamente la versión de prueba usa
+`snapassist-manage uninstall test`.
 
 Esto detiene SnapAssist, elimina su inicio automático y borra sus archivos y
 configuración. La carpeta que descargaste con `git clone` no se elimina; puedes
@@ -151,7 +189,8 @@ esa información a un servicio en línea.
 
 ## Limitaciones conocidas
 
-- Wayland no está soportado actualmente.
+- La versión estable 1.1.0 no soporta Wayland; el canal experimental 2.x lo
+  implementa mediante GNOME Shell 46.
 - Algunas aplicaciones pueden ajustar ligeramente el tamaño solicitado.
 - Los atajos pueden entrar en conflicto con combinaciones ya reservadas por el
   escritorio u otra aplicación.

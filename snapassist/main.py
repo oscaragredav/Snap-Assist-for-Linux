@@ -23,7 +23,6 @@ from pathlib import Path
 
 from snapassist.config import (
     ERROR_LOG_FILE, LOG_DIR, LOG_FILE, LOG_MAX_BYTES, LOG_BACKUP_COUNT,
-    HOTKEY_HELP, HOTKEY_LAYOUT_MENU, HOTKEY_SNAP_GROUPS,
 )
 from snapassist.core.daemon import Daemon, WakeableQueue
 from snapassist.core.hotkeys import HotkeyManager
@@ -32,6 +31,7 @@ from snapassist.layout.engine import LayoutEngine
 from snapassist.snap.snapper import SnapEngine
 from snapassist.snap.group_manager import GroupManager
 from snapassist.ui.notifier import Notifier
+from snapassist.settings import DEFAULT_SHORTCUTS, RuntimeSettings
 
 
 def setup_logging() -> None:
@@ -200,13 +200,30 @@ def log_system_state(wm_backend, state: State) -> None:
     logger.info(state.summary())
 
 
-def build_help_message(wm_backend, state: State, group_manager, active_wid) -> str:
+def build_help_message(
+    wm_backend,
+    state: State,
+    group_manager,
+    active_wid,
+    shortcuts=None,
+) -> str:
     """Construye el contenido de `Super+/`, también reutilizable en pruebas."""
+    shortcuts = shortcuts or DEFAULT_SHORTCUTS
     group = group_manager.get_group_for_window(active_wid) if active_wid else None
+    def display_hotkey(value: str) -> str:
+        names = {
+            "super": "Super",
+            "ctrl": "Ctrl",
+            "alt": "Alt",
+            "shift": "Shift",
+            "slash": "/",
+        }
+        return "+".join(names.get(part, part.upper()) for part in value.split("+"))
+
     lines = [
-        "Super+Z — layouts",
-        "Super+Alt+Tab — traer grupo al frente",
-        "Super+/ — ayuda y estado",
+        f"{display_hotkey(shortcuts['layout_menu'])} — layouts",
+        f"{display_hotkey(shortcuts['snap_groups'])} — traer grupo al frente",
+        f"{display_hotkey(shortcuts['help'])} — ayuda y estado",
         "",
         "Daemon: activo",
         f"Grupos activos: {len(state.active_groups)}",
@@ -230,6 +247,17 @@ def main() -> None:
     logger.info("=" * 70)
     logger.info("SnapAssist daemon iniciando...")
     logger.info("=" * 70)
+    settings = RuntimeSettings.load()
+    if settings.error:
+        Notifier.send(
+            "La configuración no es válida; se usaron layouts y atajos predeterminados."
+        )
+    logger.info(
+        "Configuración: %s | layouts=%d | archivo=%s",
+        "personalizada" if settings.loaded_from_file else "predeterminada",
+        len(settings.layouts),
+        settings.source_path,
+    )
 
     try:
         wm_backend = detect_and_create_backend()
@@ -263,17 +291,19 @@ def main() -> None:
         snap_engine,
         ui_manager,
         group_manager=group_manager,
+        layouts=settings.layout_templates,
     )
 
     def on_super_z():
         # HotkeyManager lo encola; el daemon lo ejecuta en el hilo de X11.
         snap_flow.trigger()
 
-    if not hotkey_manager.register(HOTKEY_LAYOUT_MENU, on_super_z):
+    layout_hotkey = settings.shortcuts["layout_menu"]
+    if not hotkey_manager.register(layout_hotkey, on_super_z):
         logger.error(
             "No se pudo registrar el atajo '%s'. "
             "Posiblemente otro programa ya lo capturó.",
-            HOTKEY_LAYOUT_MENU,
+            layout_hotkey,
         )
 
     def on_snap_group():
@@ -288,14 +318,22 @@ def main() -> None:
     def on_help():
         active_wid = wm_backend.get_active_window()
         Notifier.send(
-            build_help_message(wm_backend, state, group_manager, active_wid),
+            build_help_message(
+                wm_backend,
+                state,
+                group_manager,
+                active_wid,
+                settings.shortcuts,
+            ),
             timeout_ms=6000,
         )
 
-    if not hotkey_manager.register(HOTKEY_SNAP_GROUPS, on_snap_group):
-        logger.error("No se pudo registrar el atajo '%s'.", HOTKEY_SNAP_GROUPS)
-    if not hotkey_manager.register(HOTKEY_HELP, on_help):
-        logger.error("No se pudo registrar el atajo '%s'.", HOTKEY_HELP)
+    groups_hotkey = settings.shortcuts["snap_groups"]
+    help_hotkey = settings.shortcuts["help"]
+    if not hotkey_manager.register(groups_hotkey, on_snap_group):
+        logger.error("No se pudo registrar el atajo '%s'.", groups_hotkey)
+    if not hotkey_manager.register(help_hotkey, on_help):
+        logger.error("No se pudo registrar el atajo '%s'.", help_hotkey)
 
     logger.info(
         "Atajos registrados: %s",

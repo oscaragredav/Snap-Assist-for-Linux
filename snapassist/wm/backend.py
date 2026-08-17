@@ -37,6 +37,10 @@ class WindowManager(ABC):
         """
         ...
 
+    def get_snapshot_windows(self) -> List[int]:
+        """Retorna ventanas observables, incluidas transitorias no elegibles."""
+        return self.get_all_windows()
+
     @abstractmethod
     def get_eligible_windows(self) -> List[WindowInfo]:
         """Retorna candidatos de Snap Assist con sus metadatos."""
@@ -165,6 +169,14 @@ class WindowManager(ABC):
     def get_monitors(self) -> List[Rect]:
         """Retorna la geometría actual de los monitores conocidos."""
         return []
+
+    def get_current_workspace(self) -> int:
+        """Retorna el índice EWMH del workspace activo si está disponible."""
+        return 0
+
+    def get_window_workspace(self, wid: int) -> int:
+        """Retorna el workspace de una ventana; sticky usa el actual."""
+        return self.get_current_workspace()
 
     @abstractmethod
     def get_display(self) -> object:

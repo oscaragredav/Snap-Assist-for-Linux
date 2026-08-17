@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node>
+  <interface name="org.snapassist.Shell1">
+    <method name="GetProtocolInfo"><arg type="s" direction="out" name="info_json"/></method>
+    <method name="GetSnapshot"><arg type="s" direction="out" name="snapshot_json"/></method>
+    <method name="Activate"><arg type="s" direction="in" name="operation_id"/><arg type="s" direction="in" name="window_handle"/><arg type="s" direction="out" name="result_json"/></method>
+    <method name="MoveResize"><arg type="s" direction="in" name="operation_id"/><arg type="s" direction="in" name="window_handle"/><arg type="i" direction="in" name="x"/><arg type="i" direction="in" name="y"/><arg type="i" direction="in" name="width"/><arg type="i" direction="in" name="height"/><arg type="s" direction="out" name="result_json"/></method>
+    <method name="SetMaximized"><arg type="s" direction="in" name="operation_id"/><arg type="s" direction="in" name="window_handle"/><arg type="b" direction="in" name="maximized"/><arg type="s" direction="out" name="result_json"/></method>
+    <method name="MoveToWorkspace"><arg type="s" direction="in" name="operation_id"/><arg type="s" direction="in" name="window_handle"/><arg type="s" direction="in" name="workspace_handle"/><arg type="s" direction="out" name="result_json"/></method>
+    <method name="ShowLayouts"><arg type="s" direction="in" name="operation_id"/><arg type="t" direction="in" name="flow_id"/><arg type="s" direction="in" name="payload_json"/><arg type="s" direction="out" name="result_json"/></method>
+    <method name="ShowSuggestions"><arg type="s" direction="in" name="operation_id"/><arg type="t" direction="in" name="flow_id"/><arg type="s" direction="in" name="payload_json"/><arg type="s" direction="out" name="result_json"/></method>
+    <method name="ShowHelp"><arg type="s" direction="in" name="operation_id"/><arg type="t" direction="in" name="flow_id"/><arg type="s" direction="in" name="payload_json"/><arg type="s" direction="out" name="result_json"/></method>
+    <method name="HidePresentation"><arg type="s" direction="in" name="operation_id"/><arg type="t" direction="in" name="flow_id"/><arg type="s" direction="out" name="result_json"/></method>
+    <method name="Notify"><arg type="s" direction="in" name="operation_id"/><arg type="s" direction="in" name="message"/><arg type="u" direction="in" name="timeout_ms"/><arg type="s" direction="out" name="result_json"/></method>
+    <method name="ConfigureShortcuts"><arg type="s" direction="in" name="operation_id"/><arg type="s" direction="in" name="shortcuts_json"/><arg type="s" direction="out" name="result_json"/></method>
+    <signal name="PlatformEvent"><arg type="s" name="event_json"/></signal>
+    <signal name="OperationCompleted"><arg type="s" name="result_json"/></signal>
+    <signal name="UiAction"><arg type="s" name="action_json"/></signal>
+  </interface>
+</node>

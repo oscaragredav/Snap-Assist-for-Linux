@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "gate": "U0",
+  "result": "rejected",
+  "date": "2026-08-13T05:05:49.523170+00:00",
+  "commit": "4c181768cf513563ae5ba4411a751719506acd98",
+  "session": "X11 o Wayland",
+  "tester": "nombre",
+  "checks": [
+    {
+      "name": "describir comprobación",
+      "passed": false
+    }
+  ],
+  "evidence": [
+    "ruta a log, captura o informe"
+  ],
+  "notes": "editar y cambiar result a approved solo tras completar la guía"
+}

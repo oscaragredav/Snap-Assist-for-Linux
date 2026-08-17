@@ -1,0 +1,10 @@
+{
+  "uuid": "snapassist-test@oscaragredav",
+  "name": "SnapAssist Test",
+  "description": "GNOME/Mutter capability spike for the isolated SnapAssist test channel",
+  "shell-version": ["46"],
+  "settings-schema": "org.snapassist.shell.test",
+  "snapassist-channel": "test",
+  "version": 1,
+  "url": "https://github.com/oscaragredav/Snap-Assist-for-Linux"
+}

@@ -29,7 +29,7 @@ def test_layout_navigation_reaches_1_1_1():
     for _ in range(len(LAYOUT_TEMPLATES) - 1):
         menu._move(1)
     assert menu._active_layout_idx == len(LAYOUT_TEMPLATES) - 1
-    assert menu._templates[menu._active_layout_idx].name == "1:1:1"
+    assert menu._templates[menu._active_layout_idx].name == "1/3 : 1/3 : 1/3"
 
 
 def test_disabled_layout_is_skipped_by_keyboard_navigation():
