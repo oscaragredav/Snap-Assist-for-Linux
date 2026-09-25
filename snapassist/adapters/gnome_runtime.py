@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from snapassist.config import LayoutTemplate
 from snapassist.runtime.contracts import (

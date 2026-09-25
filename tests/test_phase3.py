@@ -12,7 +12,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import Optional
-from snapassist.config import Rect, ZoneTemplate, LayoutTemplate, ZoneRef
+from snapassist.config import Rect, ZoneTemplate, LayoutTemplate, ZoneRef, WindowGeometry
 
 
 class MockBackend:
@@ -21,8 +21,7 @@ class MockBackend:
         self.focuses = []
         self.maximized_states = []
         
-    def get_window_geometry(self, wid: int) -> 'WindowGeometry':
-        from snapassist.config import WindowGeometry
+    def get_window_geometry(self, wid: int) -> WindowGeometry:
         return WindowGeometry(rect=Rect(0, 0, 800, 600))
         
     def get_monitor_for_window(self, wid: int) -> int:
